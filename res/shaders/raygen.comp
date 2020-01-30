@@ -1,48 +1,11 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "primitive.glsl"
+#include "material.glsl"
 
 #define ALLOW_SPHERES
 #define ALLOW_PLANES
 #define ALLOW_TRIANGLES
-
-struct Ray { vec4 pos; vec4 dir; };
-
-const uint MaterialInfo_CastReflections = 1;
-const uint MaterialInfo_CastRefractions = 2;
-const uint MaterialInfo_CastShadows = 4;
-const uint MaterialInfo_UseSpecular = 8;
-const uint MaterialInfo_TexAlbedo = 16;
-const uint MaterialInfo_TexNormal = 32;
-const uint MaterialInfo_TexRoughness = 64;
-const uint MaterialInfo_TexMetallic = 128;
-const uint MaterialInfo_TexSpecular = 256;
-const uint MaterialInfo_TexOpacity = 512;
-const uint MaterialInfo_TexEmission = 1024;
-
-struct Material {
-
-	vec4 colorSpecular;
-
-	vec4 ambientIor;
-
-	vec4 emissiveRoughness;
-
-	float metallic;
-	float transparency;
-	uint materialInfo;
-	uint padding;
-};
-
-struct Triangle {
-
-	vec3 p0;
-	uint object;
-
-	vec3 p1;
-	uint material;
-
-	vec3 p2;
-	uint padding;
-};
 
 layout(binding=0, std140) uniform RaygenData {
 	vec4 eye;
@@ -54,11 +17,6 @@ layout(binding=0, std140) uniform RaygenData {
 layout(binding=0, rgba16f) uniform image2D rayOutput;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-const float noHit = 3.4028235e38;
-const float epsilon = 1e-8;
-const uint noMaterial = 0xFFFFFFFF;
-const float clipNear = 0.1;
 
 layout(binding=0, std140) buffer Spheres {
 	vec4 spheres[];		//pos, rad^2
@@ -93,72 +51,7 @@ vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n) {
 }
 
 vec3 shade(const Material m, const vec3 pos, const vec3 n) {
-	return shadeLight(m, vec3(-1, -1, -1), pos, n);
-}
-
-//Ray intersections
-
-bool sphereIntersection(const Ray r, const vec4 sphere, inout vec3 hit) {
-
-	const vec4 dif = sphere - r.pos;
-	const float t = dot(dif, r.dir);
-
-	const vec4 Q = dif - t * r.dir;
-	const float Q2 = dot(Q, Q);
-
-	const bool outOfSphere = Q2 > sphere.w;
-	const float hitT = t - sqrt(sphere.w - Q2);
-
-	if(!outOfSphere && hitT >= 0 && hitT < hit.z) {
-		hit.z = hitT;
-		return true;
-	}
-
-	return false;
-}
-
-bool planeIntersection(const Ray r, const vec4 plane, inout vec3 hit) {
-
-	//TODO:
-
-	float RdotP = dot(r.dir.xyz, plane.xyz);
-	float hitT = dot(r.pos.xyz, plane.xyz) + plane.w;
-
-	if(RdotP >= 0 && hitT >= 0 && hitT < hit.z) {
-		hit.z = hitT;
-		return true;
-	}
-
-	return false;
-}
-
-bool triangleIntersection(const Ray r, const Triangle tri, inout vec3 hit) {
-
-	const vec3 p1_p0 = tri.p1 - tri.p0;
-	const vec3 p2_p0 = tri.p2 - tri.p0;
-	
-	const vec3 h = cross(r.dir.xyz, p2_p0);
-	const float a = dot(p1_p0, h);
-	
-	if (abs(a) < epsilon) return false;
-	
-	const float f = 1 / a;
-	const vec3 s = r.pos.xyz - tri.p0;
-	const float u = f * dot(s, h);
-	
-	if (u < 0 || u > 1) return false; 
-	
-	const vec3 q = cross(s, p1_p0);
-	const float v = f * dot(r.dir.xyz, q);
-	
-	if (v < 0 || u + v > 1) return false;
-	
-	float t = f * dot(p2_p0, q);
-	
-	if (t <= epsilon || t >= 1 / epsilon || t >= hit.z) return false;
-
-	hit = vec3(u, v, t);
-	return true;
+	return shadeLight(m, vec3(1, 1, -1), pos, -n);
 }
 
 //Handling intersection
@@ -192,7 +85,7 @@ vec3 trace(const Ray ray) {
 	#ifdef ALLOW_SPHERES
 
 	for(int i = 0; i < spheres.length(); ++i) {
-		if(sphereIntersection(ray, spheres[i], hit)) {
+		if(rayIntersectSphere(ray, spheres[i], hit)) {
 			material = i;
 			normal = normalize(hit.z * ray.dir.xyz + ray.pos.xyz - spheres[i].xyz);
 		}
@@ -203,9 +96,9 @@ vec3 trace(const Ray ray) {
 	#ifdef ALLOW_PLANES
 
 	for(int i = 0; i < planes.length(); ++i) {
-		if(planeIntersection(ray, planes[i], hit)) {
+		if(rayIntersectPlane(ray, planes[i], hit)) {
 			material = i;
-			normal = planes[i].xyz;
+			normal = -planes[i].xyz;
 		}
 	}
 
@@ -214,13 +107,15 @@ vec3 trace(const Ray ray) {
 	#ifdef ALLOW_TRIANGLES
 
 	for(int i = 0; i < triangles.length(); ++i) {
-		if(triangleIntersection(ray, triangles[i], hit)) {
+		if(rayIntersectTri(ray, triangles[i], hit)) {
 			material = triangles[i].material;
-			normal = cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0);	//Flat shading for now
+			normal = -cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0);	//Flat shading for now
 		}
 	}
 
 	#endif
+
+	//TODO: Only get normal of one object
 
 	return doIntersect(ray, hit, normal, material);
 }
