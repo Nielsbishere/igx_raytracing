@@ -1,0 +1,102 @@
+#version 450
+
+layout(binding=0, std140) uniform RaygenData {
+	vec4 eye;
+	vec4 p0;
+	vec4 p1;
+	vec4 p2;
+};
+
+struct Ray { vec4 pos; vec4 dir; };
+
+layout(binding=0, rgba16f) uniform image2D rayOutput;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+const float highest = 3.4028235e38;
+const float clipNear = 0.1;
+
+layout(binding=0, std140) buffer Spheres {
+	vec4 spheres[];		//pos, rad^2
+};
+
+//Sphere ray intersection 
+
+void sphereIntersection(const Ray r, const vec4 sphere, inout float sphereHit, inout vec3 normal) {
+
+	const vec4 dif = sphere - r.pos;
+	float t = dot(dif, r.dir);
+
+	const vec4 Q = dif - t * r.dir;
+	const float Q2 = dot(Q, Q);
+
+	const bool outOfSphere = Q2 > sphere.w;
+	t -= sqrt(sphere.w - Q2);
+
+	if(!outOfSphere && t >= 0 && t < sphereHit){
+		normal = normalize(t * r.dir.xyz + r.pos.xyz - sphere.xyz);
+		sphereHit = t;
+	}
+}
+
+//Handling intersection
+
+vec4 miss(const Ray r) {
+	return vec4(0, 0.5, 1, 1);
+}
+
+vec4 hit(const vec4 pos, const vec3 normal) {
+	return vec4(normal * 0.5 + 0.5, 1);
+}
+
+vec4 doIntersect(const Ray r, const float t, const vec3 normal) {
+
+	if(t >= highest)
+		return miss(r);
+
+	const vec4 position = r.pos + r.dir * t;
+	return hit(position, normal);
+}
+
+vec4 trace(const Ray ray, inout float hit, inout vec3 normal) {
+
+	for(int i = 0; i < spheres.length(); ++i)
+		sphereIntersection(ray, spheres[i], hit, normal);
+
+	return doIntersect(ray, hit, normal);
+}
+
+//
+
+void main() {
+
+	//Get ray position
+
+	const ivec2 size = imageSize(rayOutput);
+	const uvec3 loc = gl_GlobalInvocationID;
+
+	const vec2 uv = (vec2(loc.xy) + 0.5) / vec2(size);
+
+	//Calculate ray
+
+	const vec4 right = p1 - p0;
+	const vec4 up = p2 - p0;
+
+	const vec4 rayPos = p0 + uv.x * right + uv.y * up;
+
+	const Ray ray = Ray(
+		rayPos,
+		normalize(rayPos - eye)
+	);
+
+	//Trace rays
+
+	float hit = highest;
+	vec3 normal = vec3(0, 0, 0);
+
+	vec4 color = trace(ray, hit, normal);
+
+	//Store
+
+	imageStore(rayOutput, ivec2(loc.xy), color);
+}
