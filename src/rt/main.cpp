@@ -27,17 +27,47 @@ struct RaytracingInterface : public ViewportInterface {
 	PrimitiveBuffer mesh;
 	Descriptors raygenDescriptors;
 	Pipeline raygenPipeline;
-	ShaderBuffer raygenData, sphereData;
+	ShaderBuffer raygenData, sphereData, materialData, planeData, triangleData;
 	Texture raytracingOutput, tex2D;
 	Sampler samp;
 
 	Vec2u32 res;
-	Vec3f32 eye{ };
-	f64 speed = 2;
+	Vec3f32 eye{ 0, 0, 7 };
+	f64 speed = 2, fovChangeSpeed = 7;
+	f32 fov = f32(70_deg);
 
-	//Data on the GPU (test shader)
+	//Data required for raygen
 	struct RaygenData {
 		Vec4f32 eye, p0, p1, p2;
+	};
+
+	//Material data
+	struct Material {
+
+		Vec4f32 colorSpecular;
+
+		Vec4f32 ambientIor;
+
+		Vec4f32 emissiveRoughness;
+
+		f32 metallic;
+		f32 transparency;
+		u32 materialInfo;
+		u32 padding;
+	};
+
+	//Triangle data
+
+	struct Triangle {
+
+		Vec3f32 p0;
+		u32 object;
+
+		Vec3f32 p1;
+		u32 material;
+
+		Vec3f32 p2;
+		u32 padding;
 	};
 
 	//Create resources
@@ -145,7 +175,50 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Sphere data"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("spheres"), ShaderBufferLayout(0, Buffer((u8*)spheres, (u8*)(spheres + sizeof(spheres)))) } }
+				{ { NAME("spheres"), ShaderBufferLayout(0, Buffer((u8*)spheres, (u8*)spheres + sizeof(spheres))) } }
+			)
+		};
+
+		Vec4f32 planes[] = {
+			Vec4f32(0, 1, 0, -5)
+		};
+
+		planeData = {
+			g, NAME("Plane data"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
+				{ { NAME("planes"), ShaderBufferLayout(0, Buffer((u8*)planes, (u8*)planes + sizeof(planes))) } }
+			)
+		};
+
+		Triangle triangles[] = {
+			{ Vec3f32(-1, 1, 0), 0, Vec3f32(1, 1, 0), 0, Vec3f32(1, -1, 0), 0 },
+			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 0), 0 },
+			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 }
+		};
+
+		triangleData = {
+			g, NAME("Triangle data"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
+				{ { NAME("triangles"), ShaderBufferLayout(0, Buffer((u8*)triangles, (u8*)triangles + sizeof(triangles))) } }
+			)
+		};
+
+		Material materials[] = {
+			{ { 1, 0, 0, 0 }, { 0.01f, 0, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 0, 1, 0, 0 }, { 0, 0.01f, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 0, 0, 1, 0 }, { 0, 0, 0.01f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 1, 0, 1, 0 }, { 0.01f, 0, 0.01f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 1, 1, 0, 0 }, { 0.01f, 0.01f, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 0, 1, 1, 0 }, { 0, 0.01f, 0.01f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 }
+		};
+
+		materialData = {
+			g, NAME("Material data"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
+				{ { NAME("materials"), ShaderBufferLayout(0, Buffer((u8*)materials, (u8*)materials + sizeof(materials))) } }
 			)
 		};
 
@@ -189,13 +262,19 @@ struct RaytracingInterface : public ViewportInterface {
 		PipelineLayout pipelineLayout(
 			RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, true),
 			RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(RaygenData)),
-			RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32))
+			RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+			RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Material)),
+			RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+			RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Triangle))
 		);
 
 		auto descriptorsInfo = Descriptors::Info(pipelineLayout, {});
 		descriptorsInfo.resources[0] = nullptr;
 		descriptorsInfo.resources[1] = { raygenData, 0 };
 		descriptorsInfo.resources[2] = { sphereData, 0 };
+		descriptorsInfo.resources[3] = { materialData, 0 };
+		descriptorsInfo.resources[4] = { planeData, 0 };
+		descriptorsInfo.resources[5] = { triangleData, 0 };
 
 		raygenDescriptors = {
 			g, NAME("Raygen descriptors"),
@@ -210,7 +289,7 @@ struct RaytracingInterface : public ViewportInterface {
 				PipelineFlag::OPTIMIZE,
 				raygenComp,
 				pipelineLayout,
-				Vec3u32{ 16, 16, 1 }
+				Vec3u32{ 8, 8, 1 }
 			)
 		};
 
@@ -246,12 +325,14 @@ struct RaytracingInterface : public ViewportInterface {
 
 		auto v = Mat4x4f32::lookDirection(eye, { 0, 0, -1 }, { 0, 1, 0 });
 
+		const f32 aspect = res.cast<Vec2f32>().aspect();
+
 		Vec4f32 eye4 = (-eye).cast<Vec4f32>();
 		eye4.w = 1;
 
-		const Vec4f32 p0 = v * Vec4f32(-1, 1, -1, 1);
-		const Vec4f32 p1 = v * Vec4f32(1, 1, -1, 1);
-		const Vec4f32 p2 = v * Vec4f32(-1, -1, -1, 1);
+		const Vec4f32 p0 = v * Vec4f32(-aspect, 1, -1, 1);
+		const Vec4f32 p1 = v * Vec4f32(aspect, 1, -1, 1);
+		const Vec4f32 p2 = v * Vec4f32(-aspect, -1, -1, 1);
 
 		RaygenData buffer {
 			eye4,
@@ -307,7 +388,7 @@ struct RaytracingInterface : public ViewportInterface {
 	//Update eye
 	void update(const ViewportInfo* vi, f64 dt) final override {
 
-		Vec3f32 d;
+		Vec3f32 d{};
 
 		for (auto* dvc : vi->devices)
 			if (dvc->isType(InputDevice::KEYBOARD)) {
@@ -331,7 +412,7 @@ struct RaytracingInterface : public ViewportInterface {
 			}
 
 		if (d.any())
-			eye += d * f32(dt * speed);
+			eye += d.clamp(-1, 1) * f32(dt * speed);
 
 		if (res.neq(0).all())
 			updateUniforms();
