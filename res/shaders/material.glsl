@@ -2,7 +2,7 @@
 
 const uint MaterialInfo_CastReflections = 1;
 const uint MaterialInfo_CastRefractions = 2;
-const uint MaterialInfo_CastShadows = 4;
+const uint MaterialInfo_NoCastShadows = 4;
 const uint MaterialInfo_UseSpecular = 8;
 const uint MaterialInfo_TexAlbedo = 16;
 const uint MaterialInfo_TexNormal = 32;

@@ -1,0 +1,4 @@
+
+#define ALLOW_SPHERES
+#define ALLOW_PLANES
+#define ALLOW_TRIANGLES

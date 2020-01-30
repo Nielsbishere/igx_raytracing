@@ -27,9 +27,12 @@ struct RaytracingInterface : public ViewportInterface {
 	PrimitiveBuffer mesh;
 	Descriptors raygenDescriptors;
 	Pipeline raygenPipeline;
-	ShaderBuffer raygenData, sphereData, materialData, planeData, triangleData;
 	Texture raytracingOutput, tex2D;
 	Sampler samp;
+
+	ShaderBuffer 
+		raygenData, sphereData, planeData, triangleData,
+		materialData, shadowRayData, counterBuffer;
 
 	Vec2u32 res;
 	Vec3f32 eye{ 0, 0, 7 };
@@ -39,6 +42,19 @@ struct RaytracingInterface : public ViewportInterface {
 	//Data required for raygen
 	struct RaygenData {
 		Vec4f32 eye, p0, p1, p2;
+	};
+
+	//A ray payload
+	struct RayPayload {
+		Vec3f32 pos;	u32 rayFlag;
+		Vec3f32 dir;	u32 screenX;
+		Vec3f32 col;	u32 screenY;
+	};
+
+	//The counter buffer
+	struct CounterBuffer {
+		u32 shadowCounter;
+		u32 reflractionCounter;
 	};
 
 	//Material data
@@ -206,12 +222,12 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Material materials[] = {
-			{ { 1, 0, 0, 0 }, { 0.01f, 0, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
-			{ { 0, 1, 0, 0 }, { 0, 0.01f, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
-			{ { 0, 0, 1, 0 }, { 0, 0, 0.01f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
-			{ { 1, 0, 1, 0 }, { 0.01f, 0, 0.01f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
-			{ { 1, 1, 0, 0 }, { 0.01f, 0.01f, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
-			{ { 0, 1, 1, 0 }, { 0, 0.01f, 0.01f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 }
+			{ { 1, 0, 0, 0 }, { 0.05f, 0, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 0, 1, 0, 0 }, { 0, 0.05f, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 0, 0, 1, 0 }, { 0, 0, 0.05f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 1, 0, 1, 0 }, { 0.05f, 0, 0.05f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 1, 1, 0, 0 }, { 0.05f, 0.05f, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 0, 1, 1, 0 }, { 0, 0.05f, 0.05f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 }
 		};
 
 		materialData = {
@@ -219,6 +235,14 @@ struct RaytracingInterface : public ViewportInterface {
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
 				{ { NAME("materials"), ShaderBufferLayout(0, Buffer((u8*)materials, (u8*)materials + sizeof(materials))) } }
+			)
+		};
+
+		counterBuffer = {
+			g, NAME("Counter buffer"),
+			ShaderBuffer::Info(
+				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
+				{ { NAME("counterBuffer"), ShaderBufferLayout(0, Buffer(sizeof(CounterBuffer))) } }
 			)
 		};
 
@@ -263,9 +287,11 @@ struct RaytracingInterface : public ViewportInterface {
 			RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, true),
 			RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(RaygenData)),
 			RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-			RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Material)),
-			RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-			RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Triangle))
+			RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+			RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
+			RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
+			RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
+			RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer))
 		);
 
 		auto descriptorsInfo = Descriptors::Info(pipelineLayout, {});
@@ -275,6 +301,8 @@ struct RaytracingInterface : public ViewportInterface {
 		descriptorsInfo.resources[3] = { materialData, 0 };
 		descriptorsInfo.resources[4] = { planeData, 0 };
 		descriptorsInfo.resources[5] = { triangleData, 0 };
+		descriptorsInfo.resources[6] = nullptr;
+		descriptorsInfo.resources[7] = { counterBuffer, 0 };
 
 		raygenDescriptors = {
 			g, NAME("Raygen descriptors"),
@@ -362,8 +390,19 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		shadowRayData.release();
+		shadowRayData = {
+			g, NAME("Shadow ray buffer"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				{ { NAME("shadowRays"), ShaderBufferLayout(0, sizeof(RayPayload) * size.prod()) } }
+			)
+		};
+
 		raygenDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D });
+		raygenDescriptors->updateDescriptor(6, { shadowRayData, 0 });
 		raygenDescriptors->flush(0, 1);
+		raygenDescriptors->flush(6, 1);
 		
 		//Create command list and store our commands
 
@@ -371,6 +410,7 @@ struct RaytracingInterface : public ViewportInterface {
 		cl = { g, NAME("Command list"), CommandList::Info(1_KiB) };
 
 		cl->add(
+			ClearBuffer(counterBuffer),
 			BindPipeline(raygenPipeline),
 			BindDescriptors(raygenDescriptors),
 			Dispatch(size.cast<Vec2u32>())

@@ -1,11 +1,8 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
-#include "primitive.glsl"
+#include "defines.glsl"
+#include "trace.glsl"
 #include "material.glsl"
-
-#define ALLOW_SPHERES
-#define ALLOW_PLANES
-#define ALLOW_TRIANGLES
 
 layout(binding=0, std140) uniform RaygenData {
 	vec4 eye;
@@ -18,40 +15,50 @@ layout(binding=0, rgba16f) uniform image2D rayOutput;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(binding=0, std140) buffer Spheres {
-	vec4 spheres[];		//pos, rad^2
-};
-
-layout(binding=1, std140) buffer Materials {
+layout(binding=3, std140) buffer Materials {
 	Material materials[];
 };
 
-layout(binding=2, std140) buffer Planes {
-	vec4 planes[];		//dir, offset
+layout(binding=4, std140) buffer ShadowRays {
+	RayPayload shadowRays[];
 };
 
-layout(binding=3, std140) buffer Triangles {
-	Triangle triangles[];
+layout(binding=5, std140) buffer Counters {
+	uint shadowCounter;
+	uint reflrectionCounter;
 };
 
 //TODO: Lights can also have textures 
 
 //Shading
 
-vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n) {
-
-	float shadow = 0;
-
-	if((m.materialInfo & MaterialInfo_CastShadows) != 0)
-		;	//TODO: cast shadow ray 
+vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n, const uvec2 screenPos) {
 
 	float ndotl = dot(n, l);
 
-	return m.ambientIor.xyz + m.colorSpecular.xyz * (1 - shadow) * ndotl;
+	vec3 color = m.colorSpecular.xyz * ndotl;
+
+	if((m.materialInfo & MaterialInfo_NoCastShadows) == 0) {
+
+		uint shadowId = atomicAdd(shadowCounter, 1) % shadowRays.length();
+
+		shadowRays[shadowId] = RayPayload(
+			pos + n * epsilon,
+			0,
+			-l,
+			screenPos.x,
+			color,
+			screenPos.y
+		);
+
+		return vec3(0, 0, 0);
+	}
+
+	return color;
 }
 
-vec3 shade(const Material m, const vec3 pos, const vec3 n) {
-	return shadeLight(m, vec3(1, 1, -1), pos, -n);
+vec3 shade(const Material m, const vec3 pos, const vec3 n, const uvec2 screenPos) {
+	return m.ambientIor.xyz + shadeLight(m, vec3(1, 1, -1), pos, -n, screenPos);
 }
 
 //Handling intersection
@@ -60,64 +67,33 @@ vec3 onMiss(const Ray r) {
 	return vec3(0, 0.5, 1);
 }
 
-vec3 onHit(const vec4 pos, const vec3 hit, const vec3 normal, const uint material) {
-	return shade(materials[material], pos.xyz, normal);
+vec3 onHit(const vec4 pos, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos) {
+	return shade(materials[material], pos.xyz, normal, screenPos);
 }
 
-vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material) {
+vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos) {
 
 	if(hit.z == noHit)
 		return onMiss(r);
 
 	const vec4 position = r.pos + r.dir * hit.z;
-	return onHit(position, hit, normal, material);
+	return onHit(position, hit, normal, material, screenPos);
 }
 
-vec3 trace(const Ray ray) {
+vec3 trace(const Ray ray, const uvec2 screenPos) {
+
+	//TODO: Perhaps do an intersect per tile (4 planes)
+	//		then intersect that geometry; not all spheres
 
 	vec3 hit = vec3(0, 0, noHit);
 	vec3 normal;
 	uint material;
 
-	//TODO: Perhaps do an intersect per tile (4 planes)
-	//		then intersect that geometry; not all spheres
-
-	#ifdef ALLOW_SPHERES
-
-	for(int i = 0; i < spheres.length(); ++i) {
-		if(rayIntersectSphere(ray, spheres[i], hit)) {
-			material = i;
-			normal = normalize(hit.z * ray.dir.xyz + ray.pos.xyz - spheres[i].xyz);
-		}
-	}
-
-	#endif 
-
-	#ifdef ALLOW_PLANES
-
-	for(int i = 0; i < planes.length(); ++i) {
-		if(rayIntersectPlane(ray, planes[i], hit)) {
-			material = i;
-			normal = -planes[i].xyz;
-		}
-	}
-
-	#endif
-
-	#ifdef ALLOW_TRIANGLES
-
-	for(int i = 0; i < triangles.length(); ++i) {
-		if(rayIntersectTri(ray, triangles[i], hit)) {
-			material = triangles[i].material;
-			normal = -cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0);	//Flat shading for now
-		}
-	}
-
-	#endif
+	traceGeometry(ray, hit, normal, material);
 
 	//TODO: Only get normal of one object
 
-	return doIntersect(ray, hit, normal, material);
+	return doIntersect(ray, hit, normal, material, screenPos);
 }
 
 //
@@ -127,9 +103,9 @@ void main() {
 	//Get ray position
 
 	const ivec2 size = imageSize(rayOutput);
-	const uvec3 loc = gl_GlobalInvocationID;
+	const uvec2 loc = gl_GlobalInvocationID.xy;
 
-	const vec2 uv = (vec2(loc.xy) + 0.5) / vec2(size);
+	const vec2 uv = (vec2(loc) + 0.5) / vec2(size);
 
 	//Shoot ray
 
@@ -143,9 +119,9 @@ void main() {
 		normalize(rayPos - eye)
 	);
 
-	vec3 color = trace(ray);
+	vec3 color = trace(ray, loc);
 
 	//Store
 
-	imageStore(rayOutput, ivec2(loc.xy), vec4(color, 1));
+	imageStore(rayOutput, ivec2(loc), vec4(color, 1));
 }

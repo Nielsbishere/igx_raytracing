@@ -6,6 +6,23 @@ const float epsilon = 1e-8;
 
 struct Ray { vec4 pos; vec4 dir; };
 
+const uint RayFlag_Recurse = 1;		//Turned on if recursion for this ray is enabled
+const uint RayFlag_CullBack = 2;	//Turned on if intersections with negative normals are ignored
+const uint RayFlag_CullFront = 4;	//Turned on if intersections with positive normals are ignored
+
+struct RayPayload {
+
+	vec3 pos;				//Vector position
+	uint rayFlag;			//Ray flags
+
+	vec3 dir;				//Vector direction
+	uint screenX;
+
+	vec3 color;				//Color to be multiplied into result
+	uint screenY;
+
+};
+
 struct Triangle {
 
 	vec3 p0;
@@ -73,7 +90,7 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
 	
 	if (v < 0 || u + v > 1) return false;
 	
-	float t = f * dot(p2_p0, q);
+	const float t = f * dot(p2_p0, q);
 	
 	if (t <= epsilon || t >= 1 / epsilon || t >= hit.z) return false;
 
@@ -83,4 +100,66 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
 
 bool sphereInPlane(const vec4 sphere, const vec4 plane) {
 	return dot(plane.xyz, sphere.xyz) + plane.w <= sphere.w;
+}
+
+//Ray intersections optimized for occlusion
+
+bool rayOcclusionSphere(const Ray r, const vec4 sphere, inout float hit) {
+
+	const vec4 dif = sphere - r.pos;
+	const float t = dot(dif, r.dir);
+
+	const vec4 Q = dif - t * r.dir;
+	const float Q2 = dot(Q, Q);
+
+	const bool outOfSphere = Q2 > sphere.w;
+	const float hitT = t - sqrt(sphere.w - Q2);
+
+	if(!outOfSphere && hitT >= 0 && hitT < hit) {
+		hit = hitT;
+		return true;
+	}
+
+	return false;
+}
+
+bool rayOcclusionPlane(const Ray r, const vec4 plane, inout float hit) {
+
+	float hitT = -(dot(r.pos.xyz, plane.xyz) + plane.w) / dot(r.dir.xyz, plane.xyz);
+
+	if(hitT >= 0 && hitT < hit) {
+		hit = hitT;
+		return true;
+	}
+
+	return false;
+}
+
+bool rayOcclusionTri(const Ray r, const Triangle tri, inout float hit) {
+
+	const vec3 p1_p0 = tri.p1 - tri.p0;
+	const vec3 p2_p0 = tri.p2 - tri.p0;
+	
+	const vec3 h = cross(r.dir.xyz, p2_p0);
+	const float a = dot(p1_p0, h);
+	
+	if (abs(a) < epsilon) return false;
+	
+	const float f = 1 / a;
+	const vec3 s = r.pos.xyz - tri.p0;
+	const float u = f * dot(s, h);
+	
+	if (u < 0 || u > 1) return false; 
+	
+	const vec3 q = cross(s, p1_p0);
+	const float v = f * dot(r.dir.xyz, q);
+	
+	if (v < 0 || u + v > 1) return false;
+	
+	const float t = f * dot(p2_p0, q);
+	
+	if (t <= epsilon || t >= 1 / epsilon || t >= hit) return false;
+
+	hit = t;
+	return true;
 }

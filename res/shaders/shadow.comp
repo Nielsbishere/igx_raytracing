@@ -1,0 +1,39 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "defines.glsl"
+#include "trace.glsl"
+
+layout(binding=0, rgba16f) uniform image2D rayOutput;
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding=4, std140) buffer ShadowRays {
+	RayPayload shadowRays[];
+};
+
+//Handling intersection
+
+void main() {
+
+
+	const RayPayload payload = shadowRays[gl_GlobalInvocationID.x];
+
+	//Shoot ray
+
+	const Ray ray = Ray(
+		vec4(payload.pos, 1),
+		vec4(payload.dir, 1)
+	);
+
+	if(traceOcclusion(ray))
+		return;
+
+	//Store
+
+	ivec2 loc = ivec2(payload.screenX, payload.screenY);
+
+	vec3 color = imageLoad(rayOutput, loc).rgb;
+	color += payload.color;
+
+	imageStore(rayOutput, loc, vec4(color, 1));
+}

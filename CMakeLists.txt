@@ -19,6 +19,7 @@ add_subdirectory(igx)
 # Setup test data
 
 file(GLOB_RECURSE shaders "res/shaders/*.comp" "res/shaders/*.vert" "res/shaders/*.frag")
+file(GLOB_RECURSE shaderIncludes "res/shaders/*.glsl")
 file(GLOB_RECURSE shaderBinaries "res/shaders/*.spv")
 
 # Link library
@@ -28,6 +29,7 @@ add_executable(
 	${hpp}
 	${cpp}
 	${shaders}
+	${shaderIncludes}
 	${shaderBinaries}
 	CMakeLists.txt
 )
@@ -43,9 +45,10 @@ target_link_libraries(rtigx PRIVATE igx)
 source_group("Headers" FILES ${ignisHpp})
 source_group("Source" FILES ${ignisCpp})
 source_group("Shaders" FILES ${shaders})
+source_group("Shader includes" FILES ${shaderIncludes})
 source_group("Shader binaries" FILES ${shaderBinaries})
 
-add_custom_command(TARGET rtigx POST_BUILD COMMAND compile.sh ${shaders} WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/res/shaders")
+add_custom_command(TARGET rtigx POST_BUILD COMMAND compile ${shaders} WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/res/shaders")
 
 if(MSVC)
     target_compile_options(rtigx PRIVATE /W4 /WX /MD /MP /wd26812 /wd4201 /EHsc /GR)
