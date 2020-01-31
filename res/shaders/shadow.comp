@@ -44,5 +44,5 @@ void main() {
 	vec3 color = imageLoad(rayOutput, loc).rgb;
 	color += payload.color;
 
-	imageStore(rayOutput, loc, vec4(color, 1));
+	imageStore(rayOutput, loc, vec4(color, 0));
 }

@@ -26,7 +26,7 @@ struct RaytracingInterface : public ViewportInterface {
 	CommandList cl;
 	PrimitiveBuffer mesh;
 	Descriptors raytracingDescriptors;
-	Pipeline raygenPipeline, dispatchShadowSetup, shadowPipeline;
+	Pipeline raygenPipeline, dispatchShadowSetup, shadowPipeline, postProcessing;
 	Texture raytracingOutput, tex2D;
 	Sampler samp;
 
@@ -47,8 +47,9 @@ struct RaytracingInterface : public ViewportInterface {
 	};
 
 	//Data required for raygen
-	struct RaygenData {
+	struct GPUData {
 		Vec4f32 eye, p0, p1, p2;
+		Vec3f32 lightDir; f32 exposure;
 	};
 
 	//A ray payload
@@ -181,7 +182,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Raygen uniform buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE,
-				{ { NAME("mask"), ShaderBufferLayout(0, Buffer(sizeof(RaygenData))) } }
+				{ { NAME("mask"), ShaderBufferLayout(0, Buffer(sizeof(GPUData))) } }
 			)
 		};
 
@@ -217,8 +218,7 @@ struct RaytracingInterface : public ViewportInterface {
 		Triangle triangles[] = {
 			{ Vec3f32(-1, 1, 0), 0, Vec3f32(1, 1, 0), 0, Vec3f32(1, -1, 0), 0 },
 			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 0), 0 },
-			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 },
-			{ Vec3f32(0, -10, 0), 0, Vec3f32(10, -10, 10), 3, Vec3f32(0, -10, 10), 0 }
+			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 }
 		};
 
 		triangleData = {
@@ -294,16 +294,17 @@ struct RaytracingInterface : public ViewportInterface {
 
 		//Load shader code
 
-		Buffer raygenComp, dispatchShadow, shadow;
+		Buffer raygenComp, dispatchShadow, shadow, postProcess;
 		oicAssert("Couldn't load raygen shader", oic::System::files()->read("./shaders/raygen.comp.spv", raygenComp));
 		oicAssert("Couldn't load shadow setup shader", oic::System::files()->read("./shaders/shadow_dispatch.comp.spv", dispatchShadow));
 		oicAssert("Couldn't load shadow shader", oic::System::files()->read("./shaders/shadow.comp.spv", shadow));
+		oicAssert("Couldn't load post processing shader", oic::System::files()->read("./shaders/post_processing.comp.spv", postProcess));
 
 		//Create layout for compute
 
 		PipelineLayout pipelineLayout(
 			RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, true),
-			RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(RaygenData)),
+			RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
 			RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 			RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 			RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
@@ -361,6 +362,16 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		postProcessing = {
+			g, NAME("Post processing pipeline"),
+			Pipeline::Info(
+				PipelineFlag::OPTIMIZE,
+				postProcess,
+				pipelineLayout,
+				Vec3u32{ 8, 8, 1 }
+			)
+		};
+
 		//Release the graphics instance for us until we need it again
 
 		g.pause();
@@ -400,11 +411,13 @@ struct RaytracingInterface : public ViewportInterface {
 		const Vec4f32 p1 = v * Vec4f32(aspect, 1, -1, 1);
 		const Vec4f32 p2 = v * Vec4f32(-aspect, -1, -1, 1);
 
-		RaygenData buffer {
+		GPUData buffer {
 			eye4,
 			p0,
 			p1,
-			p2
+			p2,
+			{ 0, 1, 0 },	//TODO: Doesn't work if the light dir changes
+			2
 		};
 
 		memcpy(raygenData->getBuffer(), &buffer, sizeof(buffer));
@@ -416,7 +429,6 @@ struct RaytracingInterface : public ViewportInterface {
 	void resize(const ViewportInfo*, const Vec2u32& size) final override {
 
 		res = size;
-		updateUniforms();
 		
 		//Update compute target
 
@@ -462,7 +474,11 @@ struct RaytracingInterface : public ViewportInterface {
 			BindPipeline(dispatchShadowSetup),
 			Dispatch(1),
 			BindPipeline(shadowPipeline),
-			DispatchIndirect(dispatchArgs)
+			DispatchIndirect(dispatchArgs),
+
+			//Do gamma and color correction
+			BindPipeline(postProcessing),
+			Dispatch(size.cast<Vec2u32>())
 		);
 
 		swapchain->onResize(size);

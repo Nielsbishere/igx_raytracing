@@ -40,10 +40,10 @@ struct Triangle {
 
 bool rayIntersectSphere(const Ray r, const vec4 sphere, inout vec3 hit) {
 
-	const vec4 dif = sphere - r.pos;
-	const float t = dot(dif, r.dir);
+	const vec3 dif = sphere.xyz - r.pos.xyz;
+	const float t = dot(dif, r.dir.xyz);
 
-	const vec4 Q = dif - t * r.dir;
+	const vec3 Q = dif - t * r.dir.xyz;
 	const float Q2 = dot(Q, Q);
 
 	const bool outOfSphere = Q2 > sphere.w;

@@ -1,0 +1,45 @@
+#version 450
+
+layout(binding=0, rgba16f) uniform image2D rayOutput;
+
+layout(binding=0, std140) uniform GPUData {
+
+	vec4 eye;
+	vec4 p0;
+	vec4 p1;
+	vec4 p2;
+
+	vec3 lightDir;
+	float exposure;
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+//Handling intersection
+
+void main() {
+
+	//Get ray position
+
+	const ivec2 size = imageSize(rayOutput);
+	const ivec2 loc = ivec2(gl_GlobalInvocationID.xy);
+
+	if(loc.x >= size.x || loc.y >= size.y) return;
+
+	//Store
+
+	vec3 color = imageLoad(rayOutput, loc).rgb;
+
+	//Exposure mapping
+
+	color = vec3(1, 1, 1) - exp(-color * exposure);
+
+	//Gamma correction
+
+	color = 
+			color * 0.012522878 +
+            color * color * 0.682171111 +
+            color * color * color * 0.305306011;
+
+	imageStore(rayOutput, loc, vec4(color, 1));
+}

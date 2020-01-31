@@ -4,11 +4,15 @@
 #include "trace.glsl"
 #include "material.glsl"
 
-layout(binding=0, std140) uniform RaygenData {
+layout(binding=0, std140) uniform GPUData {
+
 	vec4 eye;
 	vec4 p0;
 	vec4 p1;
 	vec4 p2;
+
+	vec3 lightDir;
+	float dt;
 };
 
 layout(binding=0, rgba16f) uniform image2D rayOutput;
@@ -26,6 +30,7 @@ layout(binding=4, std140) buffer ShadowRays {
 layout(binding=5, std140) buffer Counters {
 	uint shadowCounter;
 	uint reflrectionCounter;
+	uint exposureCounter;
 };
 
 //TODO: Lights can also have textures 
@@ -58,7 +63,7 @@ vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n, co
 }
 
 vec3 shade(const Material m, const vec3 pos, const vec3 n, const uvec2 screenPos) {
-	return m.ambientIor.xyz + shadeLight(m, vec3(0, 1, 0), pos, -n, screenPos);
+	return m.ambientIor.xyz + shadeLight(m, lightDir, pos, -n, screenPos);
 }
 
 //Handling intersection
@@ -107,6 +112,8 @@ void main() {
 	const ivec2 size = imageSize(rayOutput);
 	const uvec2 loc = gl_GlobalInvocationID.xy;
 
+	if(loc.x >= size.x || loc.y >= size.y) return;
+
 	const vec2 uv = (vec2(loc) + 0.5) / vec2(size);
 
 	//Shoot ray
@@ -125,5 +132,5 @@ void main() {
 
 	//Store
 
-	imageStore(rayOutput, ivec2(loc), vec4(color, 1));
+	imageStore(rayOutput, ivec2(loc), vec4(color, 0));
 }
