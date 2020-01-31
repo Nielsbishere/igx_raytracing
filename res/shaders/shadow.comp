@@ -34,12 +34,12 @@ void main() {
 		vec4(payload.dir, 1)
 	);
 
-	if(traceOcclusion(ray))
+	if(traceOcclusion(ray, payload.maxDist))
 		return;
 
 	//Store
 
-	ivec2 loc = ivec2(payload.screenX, payload.screenY);
+	ivec2 loc = ivec2(payload.screenCoord >> 16, payload.screenCoord & 0xFFFF);
 
 	vec3 color = imageLoad(rayOutput, loc).rgb;
 	color += payload.color;

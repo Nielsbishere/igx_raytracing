@@ -31,12 +31,12 @@ struct RaytracingInterface : public ViewportInterface {
 	Sampler samp;
 
 	ShaderBuffer 
-		raygenData, sphereData, planeData, triangleData,
+		raygenData, sphereData, planeData, triangleData, lightData,
 		materialData, shadowRayData, counterBuffer, dispatchArgs;
 
 	Vec2u32 res;
 	Vec3f32 eye{ 0, 0, 7 }, eyeDir = { 0, 0, -1 };
-	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });;
+	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
 
 	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = f32(70_deg);
@@ -78,6 +78,20 @@ struct RaytracingInterface : public ViewportInterface {
 		f32 transparency;
 		u32 materialInfo;
 		u32 padding;
+	};
+
+	//A light
+	struct Light {
+
+		Vec3f32 pos;
+		f32 rad;
+
+		Vec3f32 dir;
+		u32 type;		//dir, point
+
+		Vec3f32 color;
+		f32 angle;		//Unused for now
+
 	};
 
 	//Triangle data
@@ -186,12 +200,14 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		//Sphere y are inversed?
+
 		Vec4f32 spheres[] = {
 			Vec4f32(0, 0, 5, 1),
 			Vec4f32(0, 0, -5, 1),
-			Vec4f32(0, 5, 0, 1),
+			Vec4f32(3, 0, 0, 1),
 			Vec4f32(0, -5, 0, 1),
-			Vec4f32(5, 0, 0, 1),
+			Vec4f32(7, 0, 0, 1),
 			Vec4f32(-5, 0, 0, 1)
 		};
 
@@ -216,9 +232,10 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Triangle triangles[] = {
-			{ Vec3f32(-1, 1, 0), 0, Vec3f32(1, 1, 0), 0, Vec3f32(1, -1, 0), 0 },
+			{ }
+			/*{ Vec3f32(-1, 1, 0), 0, Vec3f32(1, 1, 0), 0, Vec3f32(1, -1, 0), 0 },
 			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 0), 0 },
-			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 }
+			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 }*/
 		};
 
 		triangleData = {
@@ -230,7 +247,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Material materials[] = {
-			{ { 1, 0, 0, 0 }, { 0.05f, 0, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
+			{ { 1, 0.5, 1, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
 			{ { 0, 1, 0, 0 }, { 0, 0.05f, 0, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
 			{ { 0, 0, 1, 0 }, { 0, 0, 0.05f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
 			{ { 1, 0, 1, 0 }, { 0.05f, 0, 0.05f, 0 }, { 0, 0, 0, 1 }, 0, 0, 0, 0 },
@@ -243,6 +260,19 @@ struct RaytracingInterface : public ViewportInterface {
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
 				{ { NAME("materials"), ShaderBufferLayout(0, Buffer((u8*)materials, (u8*)materials + sizeof(materials))) } }
+			)
+		};
+
+		Light lights[] = {
+			//{ { 0, 0, 0 }, 0, { 0, -1, 0 }, 0, { 1, 0.5f, 1 }, 0 },
+			{ { 0, 0, 0 }, 5, { 0, 0, 0 }, 1, { 0.25, 1.f, 0.5f }, 0 }
+		};
+
+		lightData = {
+			g, NAME("Lights"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
+				{ { NAME("lights"), ShaderBufferLayout(0, Buffer((u8*)lights, (u8*)lights + sizeof(lights))) } }
 			)
 		};
 
@@ -311,7 +341,8 @@ struct RaytracingInterface : public ViewportInterface {
 			RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
 			RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
 			RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
-			RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STORAGE, 6, ShaderAccess::COMPUTE, sizeof(DispatchArgs))
+			RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(DispatchArgs)),
+			RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light))
 		);
 
 		auto descriptorsInfo = Descriptors::Info(pipelineLayout, {});
@@ -324,6 +355,7 @@ struct RaytracingInterface : public ViewportInterface {
 		descriptorsInfo.resources[6] = nullptr;
 		descriptorsInfo.resources[7] = { counterBuffer, 0 };
 		descriptorsInfo.resources[8] = { dispatchArgs, 0 };
+		descriptorsInfo.resources[9] = { lightData, 0 };
 
 		raytracingDescriptors = {
 			g, NAME("Raytracing descriptors"),

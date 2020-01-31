@@ -3,6 +3,7 @@
 #include "defines.glsl"
 #include "trace.glsl"
 #include "material.glsl"
+#include "light.glsl"
 
 layout(binding=0, std140) uniform GPUData {
 
@@ -33,29 +34,45 @@ layout(binding=5, std140) buffer Counters {
 	uint exposureCounter;
 };
 
+layout(binding=7, std430) buffer Lights {
+	Light lights[];
+};
+
 //TODO: Lights can also have textures 
 
 //Shading
 
-vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n, const uvec2 screenPos) {
+vec3 shadeLight(const Material m, const Light light, const vec3 pos, const vec3 n, const vec3 diffuse, const uvec2 screenPos) {
 
-	float ndotl = clamp(dot(n, l), 0, 1);
+	vec3 l = light.dir;
+	float dist = 1;
+	float maxDist = noHit;
 
-	vec3 color = m.colorSpecular.xyz * ndotl;
+	if(light.type == LightType_Point) {
+		const vec3 L = pos - light.pos;
+		const float invDist = 1 / length(L) ;
+		l = L * invDist;
+		dist = min(light.rad * invDist, 1);
+		maxDist = light.rad;
+	}
+
+	float brightness = clamp(dot(n, l), 0, 1) * dist;
+
+	vec3 color = diffuse * brightness;
 
 	if((m.materialInfo & MaterialInfo_NoCastShadows) == 0) {
-
+	
 		uint shadowId = atomicAdd(shadowCounter, 1) % shadowRays.length();
-
+	
 		shadowRays[shadowId] = RayPayload(
 			pos + n * epsilon,
 			0,
 			-l,
-			screenPos.x,
+			screenPos.x << 16 | screenPos.y,
 			color,
-			screenPos.y
+			maxDist
 		);
-
+	
 		return vec3(0, 0, 0);
 	}
 
@@ -63,7 +80,14 @@ vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n, co
 }
 
 vec3 shade(const Material m, const vec3 pos, const vec3 n, const uvec2 screenPos) {
-	return m.ambientIor.xyz + shadeLight(m, lightDir, pos, -n, screenPos);
+
+	vec3 diffuse = m.colorSpecular.xyz;
+	vec3 col = m.ambientIor.xyz * diffuse;
+
+	for(uint i = 0; i < lights.length(); ++i)
+		col += shadeLight(m, lights[i], pos, -n, diffuse, screenPos);
+
+	return col;
 }
 
 //Handling intersection

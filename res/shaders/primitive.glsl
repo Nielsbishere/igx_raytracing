@@ -6,23 +6,6 @@ const float epsilon = 1e-5;
 
 struct Ray { vec4 pos; vec4 dir; };
 
-const uint RayFlag_Recurse = 1;		//Turned on if recursion for this ray is enabled
-const uint RayFlag_CullBack = 2;	//Turned on if intersections with negative normals are ignored
-const uint RayFlag_CullFront = 4;	//Turned on if intersections with positive normals are ignored
-
-struct RayPayload {
-
-	vec3 pos;				//Vector position
-	uint rayFlag;			//Ray flags
-
-	vec3 dir;				//Vector direction
-	uint screenX;
-
-	vec3 color;				//Color to be multiplied into result
-	uint screenY;
-
-};
-
 struct Triangle {
 
 	vec3 p0;
