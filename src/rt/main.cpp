@@ -25,19 +25,26 @@ struct RaytracingInterface : public ViewportInterface {
 	Swapchain swapchain;
 	CommandList cl;
 	PrimitiveBuffer mesh;
-	Descriptors raygenDescriptors;
-	Pipeline raygenPipeline;
+	Descriptors raytracingDescriptors;
+	Pipeline raygenPipeline, dispatchShadowSetup, shadowPipeline;
 	Texture raytracingOutput, tex2D;
 	Sampler samp;
 
 	ShaderBuffer 
 		raygenData, sphereData, planeData, triangleData,
-		materialData, shadowRayData, counterBuffer;
+		materialData, shadowRayData, counterBuffer, dispatchArgs;
 
 	Vec2u32 res;
-	Vec3f32 eye{ 0, 0, 7 };
-	f64 speed = 2, fovChangeSpeed = 7;
+	Vec3f32 eye{ 0, 0, 7 }, eyeDir = { 0, 0, -1 };
+	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });;
+
+	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = f32(70_deg);
+
+	//Dispatch args
+	struct DispatchArgs {
+		Vec3u32 dimensions;
+	};
 
 	//Data required for raygen
 	struct RaygenData {
@@ -210,7 +217,8 @@ struct RaytracingInterface : public ViewportInterface {
 		Triangle triangles[] = {
 			{ Vec3f32(-1, 1, 0), 0, Vec3f32(1, 1, 0), 0, Vec3f32(1, -1, 0), 0 },
 			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 0), 0 },
-			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 }
+			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 },
+			{ Vec3f32(0, -10, 0), 0, Vec3f32(10, -10, 10), 3, Vec3f32(0, -10, 10), 0 }
 		};
 
 		triangleData = {
@@ -242,7 +250,15 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Counter buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("counterBuffer"), ShaderBufferLayout(0, Buffer(sizeof(CounterBuffer))) } }
+				{ { NAME("counterBuffer"), ShaderBufferLayout(0, sizeof(CounterBuffer)) } }
+			)
+		};
+
+		dispatchArgs = {
+			g, NAME("Dispatch args"),
+			ShaderBuffer::Info(
+				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
+				{ { NAME("dispatchArgs"), ShaderBufferLayout(0, sizeof(DispatchArgs)) } }
 			)
 		};
 
@@ -278,8 +294,10 @@ struct RaytracingInterface : public ViewportInterface {
 
 		//Load shader code
 
-		Buffer raygenComp;
+		Buffer raygenComp, dispatchShadow, shadow;
 		oicAssert("Couldn't load raygen shader", oic::System::files()->read("./shaders/raygen.comp.spv", raygenComp));
+		oicAssert("Couldn't load shadow setup shader", oic::System::files()->read("./shaders/shadow_dispatch.comp.spv", dispatchShadow));
+		oicAssert("Couldn't load shadow shader", oic::System::files()->read("./shaders/shadow.comp.spv", shadow));
 
 		//Create layout for compute
 
@@ -291,7 +309,8 @@ struct RaytracingInterface : public ViewportInterface {
 			RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
 			RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
 			RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
-			RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer))
+			RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
+			RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STORAGE, 6, ShaderAccess::COMPUTE, sizeof(DispatchArgs))
 		);
 
 		auto descriptorsInfo = Descriptors::Info(pipelineLayout, {});
@@ -303,9 +322,10 @@ struct RaytracingInterface : public ViewportInterface {
 		descriptorsInfo.resources[5] = { triangleData, 0 };
 		descriptorsInfo.resources[6] = nullptr;
 		descriptorsInfo.resources[7] = { counterBuffer, 0 };
+		descriptorsInfo.resources[8] = { dispatchArgs, 0 };
 
-		raygenDescriptors = {
-			g, NAME("Raygen descriptors"),
+		raytracingDescriptors = {
+			g, NAME("Raytracing descriptors"),
 			descriptorsInfo
 		};
 
@@ -316,6 +336,26 @@ struct RaytracingInterface : public ViewportInterface {
 			Pipeline::Info(
 				PipelineFlag::OPTIMIZE,
 				raygenComp,
+				pipelineLayout,
+				Vec3u32{ 8, 8, 1 }
+			)
+		};
+
+		dispatchShadowSetup = {
+			g, NAME("Dispatch shadow pipeline"),
+			Pipeline::Info(
+				PipelineFlag::OPTIMIZE,
+				dispatchShadow,
+				pipelineLayout,
+				Vec3u32{ 1, 1, 1 }
+			)
+		};
+
+		shadowPipeline = {
+			g, NAME("Shadow pipeline"),
+			Pipeline::Info(
+				PipelineFlag::OPTIMIZE,
+				shadow,
 				pipelineLayout,
 				Vec3u32{ 8, 8, 1 }
 			)
@@ -350,8 +390,6 @@ struct RaytracingInterface : public ViewportInterface {
 	//Helper functions
 
 	void updateUniforms() {
-
-		auto v = Mat4x4f32::lookDirection(eye, { 0, 0, -1 }, { 0, 1, 0 });
 
 		const f32 aspect = res.cast<Vec2f32>().aspect();
 
@@ -399,10 +437,10 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
-		raygenDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D });
-		raygenDescriptors->updateDescriptor(6, { shadowRayData, 0 });
-		raygenDescriptors->flush(0, 1);
-		raygenDescriptors->flush(6, 1);
+		raytracingDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D });
+		raytracingDescriptors->updateDescriptor(6, { shadowRayData, 0 });
+		raytracingDescriptors->flush(0, 1);
+		raytracingDescriptors->flush(6, 1);
 		
 		//Create command list and store our commands
 
@@ -410,10 +448,21 @@ struct RaytracingInterface : public ViewportInterface {
 		cl = { g, NAME("Command list"), CommandList::Info(1_KiB) };
 
 		cl->add(
+
 			ClearBuffer(counterBuffer),
+
+			//Dispatch rays
+
 			BindPipeline(raygenPipeline),
-			BindDescriptors(raygenDescriptors),
-			Dispatch(size.cast<Vec2u32>())
+			BindDescriptors(raytracingDescriptors),
+			Dispatch(size.cast<Vec2u32>()),
+
+			//Dispatch shadows
+
+			BindPipeline(dispatchShadowSetup),
+			Dispatch(1),
+			BindPipeline(shadowPipeline),
+			DispatchIndirect(dispatchArgs)
 		);
 
 		swapchain->onResize(size);
@@ -430,17 +479,22 @@ struct RaytracingInterface : public ViewportInterface {
 
 		Vec3f32 d{};
 
+		bool isShift{};
+
 		for (auto* dvc : vi->devices)
 			if (dvc->isType(InputDevice::KEYBOARD)) {
 
-				if (dvc->isDown(Key::KEY_W)) d += Vec3f32(0, 0, -1);
-				if (dvc->isDown(Key::KEY_S)) d += Vec3f32(0, 0, 1);
+				if (dvc->isDown(Key::KEY_W)) d += Vec3f32(0, 0, 1);
+				if (dvc->isDown(Key::KEY_S)) d += Vec3f32(0, 0, -1);
 
 				if (dvc->isDown(Key::KEY_Q)) d += Vec3f32(0, -1, 0);
 				if (dvc->isDown(Key::KEY_E)) d += Vec3f32(0, 1, 0);
 
-				if (dvc->isDown(Key::KEY_D)) d += Vec3f32(1, 0, 0);
-				if (dvc->isDown(Key::KEY_A)) d += Vec3f32(-1, 0, 0);
+				if (dvc->isDown(Key::KEY_D)) d += Vec3f32(-1, 0, 0);
+				if (dvc->isDown(Key::KEY_A)) d += Vec3f32(1, 0, 0);
+
+				if (dvc->isDown(Key::KEY_SHIFT))
+					isShift = true;
 
 			}
 			else if (dvc->isType(InputDevice::MOUSE)) {
@@ -451,11 +505,34 @@ struct RaytracingInterface : public ViewportInterface {
 					speed = oic::Math::clamp(speed * 1 + (delta / 1024), 0.5, 5.0);
 			}
 
-		if (d.any())
-			eye += d.clamp(-1, 1) * f32(dt * speed);
+		if (d.any()) {
+
+			const f32 speedUp = isShift ? 10.f : 1.f;
+
+			d = d.clamp(-1, 1) * f32(dt * speed * speedUp);
+			eye += (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
+
+			v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
+		}
 
 		if (res.neq(0).all())
 			updateUniforms();
+	}
+
+	//Input
+
+	void onInputActivate(ViewportInfo *vp, const InputDevice *dev, InputHandle ih) final override {
+	
+		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::BUTTON_LEFT)
+			vp->hint = ViewportInfo::Hint(vp->hint | ViewportInfo::CAPTURE_CURSOR);
+
+	}
+
+	void onInputDeactivate(ViewportInfo *vp, const InputDevice *dev, InputHandle ih) final override {
+
+		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::BUTTON_LEFT)
+			vp->hint = ViewportInfo::Hint(vp->hint & ~ViewportInfo::CAPTURE_CURSOR);
+
 	}
 };
 

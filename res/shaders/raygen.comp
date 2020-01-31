@@ -34,7 +34,7 @@ layout(binding=5, std140) buffer Counters {
 
 vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n, const uvec2 screenPos) {
 
-	float ndotl = dot(n, l);
+	float ndotl = clamp(dot(n, l), 0, 1);
 
 	vec3 color = m.colorSpecular.xyz * ndotl;
 
@@ -58,7 +58,7 @@ vec3 shadeLight(const Material m, const vec3 l, const vec3 pos, const vec3 n, co
 }
 
 vec3 shade(const Material m, const vec3 pos, const vec3 n, const uvec2 screenPos) {
-	return m.ambientIor.xyz + shadeLight(m, vec3(1, 1, -1), pos, -n, screenPos);
+	return m.ambientIor.xyz + shadeLight(m, vec3(0, 1, 0), pos, -n, screenPos);
 }
 
 //Handling intersection
@@ -70,6 +70,8 @@ vec3 onMiss(const Ray r) {
 vec3 onHit(const vec4 pos, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos) {
 	return shade(materials[material], pos.xyz, normal, screenPos);
 }
+
+//Calculating intersection
 
 vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos) {
 

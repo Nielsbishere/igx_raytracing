@@ -11,12 +11,21 @@ layout(binding=4, std140) buffer ShadowRays {
 	RayPayload shadowRays[];
 };
 
+layout(binding=5, std140) buffer Counters {
+	uint shadowCounter;
+	uint reflrectionCounter;
+};
+
 //Handling intersection
 
 void main() {
 
+	const uint shadowId = gl_GlobalInvocationID.x;
 
-	const RayPayload payload = shadowRays[gl_GlobalInvocationID.x];
+	if(shadowId >= shadowCounter)
+		return;
+
+	const RayPayload payload = shadowRays[shadowId];
 
 	//Shoot ray
 

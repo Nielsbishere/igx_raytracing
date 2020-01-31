@@ -51,28 +51,28 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 
 bool traceOcclusion(const Ray ray) {
 
-	float hit = noHit;
+	vec3 hit = vec3(0, 0, noHit);
 
 	#ifdef ALLOW_SPHERES
 
 	for(int i = 0; i < spheres.length(); ++i)
-		rayOcclusionSphere(ray, spheres[i], hit);
+		rayIntersectSphere(ray, spheres[i], hit);
 
-	#endif 
+	#endif
 
 	#ifdef ALLOW_PLANES
 
-	for(int i = 0; i < planes.length(); ++i)
-		rayOcclusionSphere(ray, planes[i], hit);
+	//for(int i = 0; i < planes.length(); ++i)
+	//	rayIntersectPlane(ray, planes[i], hit);
 
 	#endif
 
 	#ifdef ALLOW_TRIANGLES
 
 	for(int i = 0; i < triangles.length(); ++i)
-		rayOcclusionTri(ray, triangles[i], hit);
+		rayIntersectTri(ray, triangles[i], hit);
 
 	#endif
 
-	return hit != noHit;
+	return hit.z != noHit;
 }
