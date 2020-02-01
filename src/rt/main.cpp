@@ -41,6 +41,15 @@ struct RaytracingInterface : public ViewportInterface {
 	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = f32(70_deg);
 
+	u8 pipelineUpdates{};
+
+	const String pipelines[4] = {
+		"./shaders/raygen.comp.spv",
+		"./shaders/shadow_dispatch.comp.spv",
+		"./shaders/shadow.comp.spv",
+		"./shaders/post_processing.comp.spv"
+	};
+
 	//Dispatch args
 	struct DispatchArgs {
 		Vec3u32 dimensions;
@@ -108,9 +117,59 @@ struct RaytracingInterface : public ViewportInterface {
 		u32 padding;
 	};
 
+	bool isFileListening{};
+
+	//GPU data
+	PipelineLayout pipelineLayout {
+		RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, true),
+		RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
+		RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+		RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+		RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
+		RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
+		RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
+		RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
+		RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(DispatchArgs)),
+		RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light))
+	};
+
 	//Create resources
 
 	RaytracingInterface(Graphics& g) : g(g) {
+
+		//Shader reloading
+
+		#ifndef NDEBUG
+
+		oic::System::files()->addFileChangeCallback(
+			[](FileSystem *, const FileInfo inf, FileChange cng, void *intr) -> void {
+		
+				if (cng == FileChange::UPDATE) {
+
+					auto *rti = (RaytracingInterface*)intr;
+
+					usz i{};
+
+					for (auto &path : rti->pipelines) {
+
+						if (inf.path == path) {
+							rti->pipelineUpdates |= 1 << i;
+							break;
+						}
+
+						//TODO: If GLSL changed, recompile pls
+
+						++i;
+					}
+
+				}
+		
+			},
+			"./shaders",
+			this
+		);
+
+		#endif
 
 		//Create primitive buffer
 
@@ -322,28 +381,10 @@ struct RaytracingInterface : public ViewportInterface {
 
 		samp = { g, NAME("Test sampler"), Sampler::Info() };
 
-		//Load shader code
+		//Reserve command list
+		cl = { g, NAME("Command list"), CommandList::Info(1_KiB) };
 
-		Buffer raygenComp, dispatchShadow, shadow, postProcess;
-		oicAssert("Couldn't load raygen shader", oic::System::files()->read("./shaders/raygen.comp.spv", raygenComp));
-		oicAssert("Couldn't load shadow setup shader", oic::System::files()->read("./shaders/shadow_dispatch.comp.spv", dispatchShadow));
-		oicAssert("Couldn't load shadow shader", oic::System::files()->read("./shaders/shadow.comp.spv", shadow));
-		oicAssert("Couldn't load post processing shader", oic::System::files()->read("./shaders/post_processing.comp.spv", postProcess));
-
-		//Create layout for compute
-
-		PipelineLayout pipelineLayout(
-			RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, true),
-			RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
-			RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-			RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-			RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
-			RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
-			RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
-			RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
-			RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(DispatchArgs)),
-			RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light))
-		);
+		//Create descriptors
 
 		auto descriptorsInfo = Descriptors::Info(pipelineLayout, {});
 		descriptorsInfo.resources[0] = nullptr;
@@ -362,51 +403,17 @@ struct RaytracingInterface : public ViewportInterface {
 			descriptorsInfo
 		};
 
-		//Create pipelines
+		//Prepare shaders
 
-		raygenPipeline = {
-			g, NAME("Raygen pipeline"),
-			Pipeline::Info(
-				PipelineFlag::OPTIMIZE,
-				raygenComp,
-				pipelineLayout,
-				Vec3u32{ 8, 8, 1 }
-			)
-		};
-
-		dispatchShadowSetup = {
-			g, NAME("Dispatch shadow pipeline"),
-			Pipeline::Info(
-				PipelineFlag::OPTIMIZE,
-				dispatchShadow,
-				pipelineLayout,
-				Vec3u32{ 1, 1, 1 }
-			)
-		};
-
-		shadowPipeline = {
-			g, NAME("Shadow pipeline"),
-			Pipeline::Info(
-				PipelineFlag::OPTIMIZE,
-				shadow,
-				pipelineLayout,
-				Vec3u32{ 8, 8, 1 }
-			)
-		};
-
-		postProcessing = {
-			g, NAME("Post processing pipeline"),
-			Pipeline::Info(
-				PipelineFlag::OPTIMIZE,
-				postProcess,
-				pipelineLayout,
-				Vec3u32{ 8, 8, 1 }
-			)
-		};
+		makePipelines(0xFF);
 
 		//Release the graphics instance for us until we need it again
 
 		g.pause();
+	}
+
+	~RaytracingInterface() {
+		oic::System::files()->removeFileChangeCallback("./shaders");
 	}
 
 	//Create viewport resources
@@ -486,10 +493,14 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->flush(0, 1);
 		raytracingDescriptors->flush(6, 1);
 		
-		//Create command list and store our commands
+		fillCommandList();
 
-		cl.release();
-		cl = { g, NAME("Command list"), CommandList::Info(1_KiB) };
+		swapchain->onResize(size);
+	}
+
+	void fillCommandList() {
+
+		cl->clear();
 
 		cl->add(
 
@@ -499,7 +510,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 			BindPipeline(raygenPipeline),
 			BindDescriptors(raytracingDescriptors),
-			Dispatch(size.cast<Vec2u32>()),
+			Dispatch(res.cast<Vec2u32>()),
 
 			//Dispatch shadows
 
@@ -509,11 +520,84 @@ struct RaytracingInterface : public ViewportInterface {
 			DispatchIndirect(dispatchArgs),
 
 			//Do gamma and color correction
-			BindPipeline(postProcessing),
-			Dispatch(size.cast<Vec2u32>())
-		);
 
-		swapchain->onResize(size);
+			BindPipeline(postProcessing),
+			Dispatch(res.cast<Vec2u32>())
+		);
+	}
+
+	void makePipelines(u8 modified) {
+
+		if (modified & 1) {
+
+			Buffer raygenComp;
+			oicAssert("Couldn't load raygen shader", oic::System::files()->read(pipelines[0], raygenComp));
+
+			raygenPipeline.release();
+			raygenPipeline = {
+				g, NAME("Raygen pipeline"),
+				Pipeline::Info(
+					PipelineFlag::OPTIMIZE,
+					raygenComp,
+					pipelineLayout,
+					Vec3u32{ 8, 8, 1 }
+				)
+			};
+		}
+
+		if (modified & 2) {
+
+			Buffer dispatchShadow;
+			oicAssert("Couldn't load shadow_dispatch shader", oic::System::files()->read(pipelines[1], dispatchShadow));
+
+			dispatchShadowSetup.release();
+			dispatchShadowSetup = {
+				g, NAME("Dispatch shadow pipeline"),
+				Pipeline::Info(
+					PipelineFlag::OPTIMIZE,
+					dispatchShadow,
+					pipelineLayout,
+					Vec3u32{ 1, 1, 1 }
+				)
+			};
+		}
+
+		if (modified & 4) {
+
+			Buffer shadow;
+			oicAssert("Couldn't load shadow shader", oic::System::files()->read(pipelines[2], shadow));
+
+			shadowPipeline.release();
+			shadowPipeline = {
+				g, NAME("Shadow pipeline"),
+				Pipeline::Info(
+					PipelineFlag::OPTIMIZE,
+					shadow,
+					pipelineLayout,
+					Vec3u32{ 64, 1, 1 }
+				)
+			};
+		}
+
+		if (modified & 8) {
+
+			Buffer postProcess;
+			oicAssert("Couldn't load post_processing shader", oic::System::files()->read(pipelines[3], postProcess));
+
+			postProcessing.release();
+			postProcessing = {
+				g, NAME("Post processing pipeline"),
+				Pipeline::Info(
+					PipelineFlag::OPTIMIZE,
+					postProcess,
+					pipelineLayout,
+					Vec3u32{ 8, 8, 1 }
+				)
+			};
+		}
+
+		if (!cl->empty())
+			fillCommandList();
 	}
 
 	//Execute commandList
@@ -524,6 +608,20 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//Update eye
 	void update(const ViewportInfo* vi, f64 dt) final override {
+
+		//TODO: Check artifacts at top of the screen
+
+		//TODO: Only stop updating once minimized
+		//		And in debug when it is unfocussed, so shaders can be easily reloaded
+
+		#ifndef NDEBUG
+
+		if (pipelineUpdates) {
+			makePipelines(pipelineUpdates);
+			pipelineUpdates = 0;
+		}
+
+		#endif
 
 		Vec3f32 d{};
 
