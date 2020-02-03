@@ -5,6 +5,9 @@
 #include "material.glsl"
 #include "light.glsl"
 
+//TODO: Instead of having a layered image, vec4f16 OpenGL extension can be used
+//		this can only be used in OpenGL tho, so two different binaries should be supplied
+
 const vec3 skyboxColor = vec3(0, 0.5, 1);
 
 layout(binding=0, std140) uniform GPUData {
@@ -45,12 +48,20 @@ layout(binding=8, std140) writeonly buffer PositionBuffer {
 
 //TODO: Lights can also have textures 
 
-//Shading
+//Per light shading
 
 vec3 shadeLight(
-	const Material m, const Light light, 
-	const vec3 pos, const vec3 n,
-	const uvec2 screenPos, inout uint id, const uint maxLayers
+	const vec3 F0,
+	const Material m,
+	const Light light, 
+	const vec3 pos,
+	const vec3 n,
+	const vec3 v,
+	const uvec2 screenPos,
+	inout uint id,
+	const uint maxLayers,
+	const float ao,
+	const float NdotV
 ) {
 
 	vec3 l = light.dir;
@@ -81,11 +92,7 @@ vec3 shadeLight(
 	float k = m.roughness + 1;
 	k *= k / 8;
 
-	const vec3 v = normalize(pos - eye.xyz);
-
-	const vec3 specular = skyboxColor;
-
-	const vec3 color = cookTorrance(m.albedo, light, n, l, v, dist, m.roughness, m.metallic, k, specular);
+	const vec3 color = cookTorrance(F0, m.albedo, light, n, l, v, NdotV, dist, m.roughness, m.metallic, k) * ao;
 
 	//Only shoot shadows for materials that allow it 
 
@@ -118,19 +125,45 @@ vec3 shadeLight(
 	return color;
 }
 
+//Trace reflection ray
+
+vec3 traceReflection(const vec3 n, const vec3 v, const uvec2 screenPos, const float NdotV, const vec3 kS) {
+
+	//const vec3 r = reflect(v, n);
+
+	return kS * skyboxColor;
+}
+
+//Per pixel shading
+
 vec3 shade(
-	const Material m, const vec3 pos, const vec3 n, 
-	const uvec2 screenPos, const uint maxLayers
+	const Material m,
+	const vec3 pos,
+	const vec3 n, 
+	const uvec2 screenPos,
+	const uint maxLayers
 ) {
 	const float ao = 1;				//TODO:
-	vec3 col = m.ambient * ao;
 
+	const vec3 v = normalize(pos - eye.xyz);
+	const float NdotV = max(dot(n, v), 0);
+
+	const vec3 F0 = mix(vec3(0.04), m.albedo, m.metallic);
+
+	const vec3 kS = fresnelSchlickRoughness(F0, NdotV, m.metallic, m.albedo, m.roughness);
+	const vec3 kD = (1 - kS) * (1 - m.metallic);
+
+	vec3 lighting = vec3(0, 0, 0);
 	uint id = 0;
 
-	for(uint i = 0; i < lights.length(); ++i)
-		col += shadeLight(m, lights[i], pos, -n, screenPos, id, maxLayers);
+	//TODO: Perfect mirrors don't need shadow rays
 
-	return col;
+	for(uint i = 0; i < lights.length(); ++i)
+		lighting += shadeLight(F0, m, lights[i], pos, -n, v, screenPos, id, maxLayers, ao, NdotV);
+
+	vec3 reflection = doReflection(-n, v, screenPos, NdotV, kS);
+
+	return (m.ambient + kD / pi) * ao * m.albedo + reflection + lighting + m.emissive;
 }
 
 //Handling intersection
