@@ -14,14 +14,15 @@ const uint MaterialInfo_TexEmission = 1024;
 
 struct Material {
 
-	vec4 colorSpecular;
-
-	vec4 ambientIor;
-
-	vec4 emissiveRoughness;
-
+	vec3 albedo;
 	float metallic;
+
+	vec3 ambient;
+	float roughness;
+
+	vec3 emissive;
 	float transparency;
+
+	uvec3 padding;
 	uint materialInfo;
-	uint padding;
 };

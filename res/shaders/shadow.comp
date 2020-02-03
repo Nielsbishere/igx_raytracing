@@ -2,16 +2,21 @@
 #extension GL_GOOGLE_include_directive : require
 #include "defines.glsl"
 #include "trace.glsl"
+#include "utils.glsl"
 
-layout(binding=0, rgba16f) uniform image2D rayOutput;
+layout(binding=0, outputFormat) uniform image2DArray rayOutput;
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding=4, std140) buffer ShadowRays {
+layout(binding=4, std140) readonly buffer ShadowRays {
 	RayPayload shadowRays[];
 };
 
-layout(binding=5, std140) buffer Counters {
+layout(binding=8, std140) readonly buffer PositionBuffer {
+	vec3 positions[];
+};
+
+layout(binding=5, std140) readonly buffer Counters {
 	uint shadowCounter;
 	uint reflrectionCounter;
 };
@@ -27,11 +32,14 @@ void main() {
 
 	const RayPayload payload = shadowRays[shadowId];
 
+	const uvec2 loc = uvec2(payload.screenCoord >> 16, payload.screenCoord & 0xFFFF);
+	const uvec2 size = uvec2(imageSize(rayOutput));
+
 	//Shoot ray
 
 	const Ray ray = Ray(
-		vec4(payload.pos, 1),
-		vec4(payload.dir, 1)
+		vec4(positions[to1D(loc, size)], 1),
+		vec4(decompressNormal(payload.dir), 1)
 	);
 
 	if(traceOcclusion(ray, payload.maxDist))
@@ -39,10 +47,12 @@ void main() {
 
 	//Store
 
-	ivec2 loc = ivec2(payload.screenCoord >> 16, payload.screenCoord & 0xFFFF);
+	int layer = int(payload.flagLayer & 0xFFFF);
 
-	vec3 color = imageLoad(rayOutput, loc).rgb;
-	color += payload.color;
+	vec3 color = payload.color;
 
-	imageStore(rayOutput, loc, vec4(color, 0));
+	if(layer == 0)
+		color += imageLoad(rayOutput, ivec3(loc, 0)).rgb;
+
+	imageStore(rayOutput, ivec3(loc, layer), vec4(color, 0));
 }

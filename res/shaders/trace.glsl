@@ -1,29 +1,28 @@
 #include "primitive.glsl"
 
-layout(binding=0, std140) buffer Spheres {
+layout(binding=0, std140) readonly buffer Spheres {
 	vec4 spheres[];		//pos, rad^2
 };
 
-layout(binding=1, std140) buffer Planes {
+layout(binding=1, std140) readonly buffer Planes {
 	vec4 planes[];		//dir, offset
 };
 
-layout(binding=2, std140) buffer Triangles {
+layout(binding=2, std140) readonly buffer Triangles {
 	Triangle triangles[];
 };
 
 
-const uint RayFlag_Recurse = 1;		//Turned on if recursion for this ray is enabled
-const uint RayFlag_CullBack = 2;	//Turned on if intersections with negative normals are ignored
-const uint RayFlag_CullFront = 4;	//Turned on if intersections with positive normals are ignored
+//TODO:
+//const uint RayFlag_Recurse = 1;		//Turned on if recursion for this ray is enabled
+//const uint RayFlag_CullBack = 2;	//Turned on if intersections with negative normals are ignored
+//const uint RayFlag_CullFront = 4;	//Turned on if intersections with positive normals are ignored
 
 struct RayPayload {
 
-	vec3 pos;				//Vector position
-	uint rayFlag;			//Ray flags
-
-	vec3 dir;				//Vector direction
+	vec2 dir;				//Vector direction in spherical coords
 	uint screenCoord;
+	uint flagLayer;
 
 	vec3 color;				//Color to be multiplied into result
 	float maxDist;
@@ -82,9 +81,8 @@ bool traceOcclusion(const Ray ray, const float maxDist) {
 
 	#ifdef ALLOW_PLANES
 
-	//TODO: it intersects the wrong way
-	//for(int i = 0; i < planes.length(); ++i)
-	//	rayIntersectPlane(ray, planes[i], hit);
+	for(int i = 0; i < planes.length(); ++i)
+		rayIntersectPlane(ray, planes[i], hit);
 
 	#endif
 

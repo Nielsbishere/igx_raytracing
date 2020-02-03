@@ -1,6 +1,7 @@
 
 const float noHit = 3.4028235e38;
-const float epsilon = 1e-5;
+const float epsilon = 1e-5;		//epsilon for offsets
+const float delta = 1e-4;		//epsilon for calculations
 
 //Define very often used types
 
@@ -44,7 +45,7 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout vec3 hit) {
 
 	float hitT = -(dot(r.pos.xyz, plane.xyz) + plane.w) / dot(r.dir.xyz, plane.xyz);
 
-	if(hitT >= 0 && hitT < hit.z) {
+	if(hitT >= delta && hitT < hit.z) {
 		hit.z = hitT;
 		return true;
 	}
@@ -60,7 +61,7 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
 	const vec3 h = cross(r.dir.xyz, p2_p0);
 	const float a = dot(p1_p0, h);
 	
-	if (abs(a) < epsilon) return false;
+	if (abs(a) < delta) return false;
 	
 	const float f = 1 / a;
 	const vec3 s = r.pos.xyz - tri.p0;
@@ -75,7 +76,7 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
 	
 	const float t = f * dot(p2_p0, q);
 	
-	if (t <= epsilon || t >= 1 / epsilon || t >= hit.z) return false;
+	if (t <= delta || t >= 1 / delta || t >= hit.z) return false;
 
 	hit = vec3(u, v, t);
 	return true;

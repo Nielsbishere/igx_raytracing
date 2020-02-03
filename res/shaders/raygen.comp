@@ -5,6 +5,8 @@
 #include "material.glsl"
 #include "light.glsl"
 
+const vec3 skyboxColor = vec3(0, 0.5, 1);
+
 layout(binding=0, std140) uniform GPUData {
 
 	vec4 eye;
@@ -13,79 +15,120 @@ layout(binding=0, std140) uniform GPUData {
 	vec4 p2;
 
 	vec3 lightDir;
-	float dt;
+	float exposure;
 };
 
-layout(binding=0, rgba16f) uniform image2D rayOutput;
+layout(binding=0, outputFormat) writeonly uniform image2DArray rayOutput;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(binding=3, std140) buffer Materials {
+layout(binding=3, std140) readonly buffer Materials {
 	Material materials[];
 };
 
-layout(binding=4, std140) buffer ShadowRays {
+layout(binding=4, std430) writeonly buffer ShadowRays {
 	RayPayload shadowRays[];
 };
 
-layout(binding=5, std140) buffer Counters {
+layout(binding=5, std430) buffer Counters {
 	uint shadowCounter;
 	uint reflrectionCounter;
-	uint exposureCounter;
 };
 
-layout(binding=7, std430) buffer Lights {
+layout(binding=7, std430) readonly buffer Lights {
 	Light lights[];
+};
+
+layout(binding=8, std140) writeonly buffer PositionBuffer {
+	vec3 positions[];
 };
 
 //TODO: Lights can also have textures 
 
 //Shading
 
-vec3 shadeLight(const Material m, const Light light, const vec3 pos, const vec3 n, const vec3 diffuse, const uvec2 screenPos) {
+vec3 shadeLight(
+	const Material m, const Light light, 
+	const vec3 pos, const vec3 n,
+	const uvec2 screenPos, inout uint id, const uint maxLayers
+) {
 
 	vec3 l = light.dir;
 	float dist = 1;
 	float maxDist = noHit;
 
 	if(light.type == LightType_Point) {
+
 		const vec3 L = pos - light.pos;
-		const float invDist = 1 / length(L) ;
-		l = L * invDist;
-		dist = min(light.rad * invDist, 1);
+		const float dst = length(L);
+		dist = dst / light.rad;
+
+		//If it's out of range, don't bother with shadow rays
+
+		if(dist > 1)
+			return vec3(0, 0, 0);
+
+		dist = 1 - dist;
+
+		//Calculate params for point light shadows
+
+		l = L * (1 / dst);
 		maxDist = light.rad;
 	}
 
-	float brightness = clamp(dot(n, l), 0, 1) * dist;
+	//Calculate color
 
-	vec3 color = diffuse * brightness;
+	float k = m.roughness + 1;
+	k *= k / 8;
+
+	const vec3 v = normalize(pos - eye.xyz);
+
+	const vec3 specular = skyboxColor;
+
+	const vec3 color = cookTorrance(m.albedo, light, n, l, v, dist, m.roughness, m.metallic, k, specular);
+
+	//Only shoot shadows for materials that allow it 
 
 	if((m.materialInfo & MaterialInfo_NoCastShadows) == 0) {
 	
-		uint shadowId = atomicAdd(shadowCounter, 1) % shadowRays.length();
+		const uint shadowId = atomicAdd(shadowCounter, 1);
+
+		//If out of bounds, assume unshadowed
+
+		if(shadowId >= shadowRays.length() || id >= maxLayers)
+			return color;
 	
+		//Shoot shadow ray
+
 		shadowRays[shadowId] = RayPayload(
-			pos + n * epsilon,
-			0,
-			-l,
+			compressNormal(-l),
 			screenPos.x << 16 | screenPos.y,
+			/*0 << 16 | */ id,
 			color,
 			maxDist
 		);
+
+		++id;
 	
 		return vec3(0, 0, 0);
 	}
 
+	//By default don't do shadows
+
 	return color;
 }
 
-vec3 shade(const Material m, const vec3 pos, const vec3 n, const uvec2 screenPos) {
+vec3 shade(
+	const Material m, const vec3 pos, const vec3 n, 
+	const uvec2 screenPos, const uint maxLayers
+) {
+	const float ao = 1;				//TODO:
+	vec3 col = m.ambient * ao;
 
-	vec3 diffuse = m.colorSpecular.xyz;
-	vec3 col = m.ambientIor.xyz * diffuse;
+	uint id = 0;
 
 	for(uint i = 0; i < lights.length(); ++i)
-		col += shadeLight(m, lights[i], pos, -n, diffuse, screenPos);
+		col += shadeLight(m, lights[i], pos, -n, screenPos, id, maxLayers);
 
 	return col;
 }
@@ -93,25 +136,27 @@ vec3 shade(const Material m, const vec3 pos, const vec3 n, const uvec2 screenPos
 //Handling intersection
 
 vec3 onMiss(const Ray r) {
-	return vec3(0, 0.5, 1);
+	return skyboxColor;
 }
 
-vec3 onHit(const vec4 pos, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos) {
-	return shade(materials[material], pos.xyz, normal, screenPos);
+vec3 onHit(const vec4 pos, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos, const uint maxLayers) {
+	return shade(materials[material], pos.xyz, normal, screenPos, maxLayers);
 }
 
 //Calculating intersection
 
-vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos) {
+vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos, inout vec3 outPos, const uint maxLayers) {
 
 	if(hit.z == noHit)
 		return onMiss(r);
 
 	const vec4 position = r.pos + r.dir * hit.z;
-	return onHit(position, hit, normal, material, screenPos);
+	outPos = position.xyz + normal * epsilon;
+
+	return onHit(position, hit, normal, material, screenPos, maxLayers);
 }
 
-vec3 trace(const Ray ray, const uvec2 screenPos) {
+vec3 trace(const Ray ray, const uvec2 screenPos, inout vec3 position, const uint maxLayers) {
 
 	//TODO: Perhaps do an intersect per tile (4 planes)
 	//		then intersect that geometry; not all spheres
@@ -124,7 +169,7 @@ vec3 trace(const Ray ray, const uvec2 screenPos) {
 
 	//TODO: Only get normal of one object
 
-	return doIntersect(ray, hit, normal, material, screenPos);
+	return doIntersect(ray, hit, normal, material, screenPos, position, maxLayers);
 }
 
 //
@@ -132,19 +177,18 @@ vec3 trace(const Ray ray, const uvec2 screenPos) {
 void main() {
 
 	//Get ray position
-
-	const ivec2 size = imageSize(rayOutput);
+	
+	const uvec3 size = uvec3(imageSize(rayOutput));
 	const uvec2 loc = gl_GlobalInvocationID.xy;
 
 	if(loc.x >= size.x || loc.y >= size.y) return;
-
-	const vec2 uv = (vec2(loc) + 0.5) / vec2(size);
 
 	//Shoot ray
 
 	const vec4 right = p1 - p0;
 	const vec4 up = p2 - p0;
-
+	
+	const vec2 uv = (vec2(loc) + 0.5) / vec2(size.xy);
 	const vec4 rayPos = p0 + uv.x * right + uv.y * up;
 
 	const Ray ray = Ray(
@@ -152,9 +196,11 @@ void main() {
 		normalize(rayPos - eye)
 	);
 
-	vec3 color = trace(ray, loc);
+	vec3 pos = vec3(noHit, noHit, noHit);
+	vec3 color = trace(ray, loc, pos, size.z);
 
 	//Store
 
-	imageStore(rayOutput, ivec2(loc), vec4(color, 0));
+	positions[to1D(loc, size.xy)] = pos;
+	imageStore(rayOutput, ivec3(loc, 0), vec4(color, 0));
 }

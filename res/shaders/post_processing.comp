@@ -1,6 +1,8 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "defines.glsl"
 
-layout(binding=0, rgba16f) uniform image2D rayOutput;
+layout(binding=0, outputFormat) uniform image2DArray rayOutput;
 
 layout(binding=0, std140) uniform GPUData {
 
@@ -21,14 +23,17 @@ void main() {
 
 	//Get ray position
 
-	const ivec2 size = imageSize(rayOutput);
-	const ivec2 loc = ivec2(gl_GlobalInvocationID.xy);
+	const ivec3 size = imageSize(rayOutput);
+	const ivec3 loc = ivec3(gl_GlobalInvocationID.xyz);
 
 	if(loc.x >= size.x || loc.y >= size.y) return;
 
 	//Store
 
 	vec3 color = imageLoad(rayOutput, loc).rgb;
+
+	for(int l = 1; l < size.z; ++l)
+		color += imageLoad(rayOutput, loc + ivec3(0, 0, l)).rgb;
 
 	//Exposure mapping
 
