@@ -1,7 +1,7 @@
 
 const float noHit = 3.4028235e38;
-const float epsilon = 1e-5;		//epsilon for offsets
-const float delta = 1e-4;		//epsilon for calculations
+const float epsilon = 1e-6;		//epsilon for offsets
+const float delta = 1e-5;		//epsilon for calculations
 
 //Define very often used types
 

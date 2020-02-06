@@ -26,13 +26,14 @@ struct RaytracingInterface : public ViewportInterface {
 	CommandList cl;
 	PrimitiveBuffer mesh;
 	Descriptors raytracingDescriptors;
-	Pipeline raygenPipeline, dispatchShadowSetup, shadowPipeline, postProcessing;
+	Pipeline raygenPipeline, dispatchSetup, shadowPipeline, postProcessing, reflectionPipeline;
 	Texture raytracingOutput, tex2D;
 	Sampler samp;
 
 	ShaderBuffer 
 		raygenData, sphereData, planeData, triangleData, lightData,
-		materialData, shadowRayData, counterBuffer, dispatchArgs, positionBuffer;
+		materialData, shadowRayData, counterBuffer, dispatchArgs, positionBuffer,
+		reflectionRayData;
 
 	Vec2u32 res;
 	Vec3f32 eye{ 0, 0, 7 }, eyeDir = { 0, 0, -1 };
@@ -43,22 +44,18 @@ struct RaytracingInterface : public ViewportInterface {
 
 	u8 pipelineUpdates{};
 
-	const String pipelines[4] = {
+	const String pipelines[5] = {
 		"./shaders/raygen.comp.spv",
-		"./shaders/shadow_dispatch.comp.spv",
+		"./shaders/dispatch_setup.comp.spv",
 		"./shaders/shadow.comp.spv",
-		"./shaders/post_processing.comp.spv"
-	};
-
-	//Dispatch args
-	struct DispatchArgs {
-		Vec3u32 dimensions;
+		"./shaders/post_processing.comp.spv",
+		"./shaders/reflection.comp.spv"
 	};
 
 	//Data required for raygen
 	struct GPUData {
 		Vec4f32 eye, p0, p1, p2;
-		Vec3f32 lightDir; f32 exposure;
+		Vec3f32 skyboxColor; f32 exposure;
 	};
 
 	//A ray payload
@@ -134,9 +131,10 @@ struct RaytracingInterface : public ViewportInterface {
 		RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
 		RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
 		RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
-		RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(DispatchArgs)),
+		RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(Vec4u32)),
 		RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
-		RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec3f32))
+		RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec3f32)),
+		RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload))
 	};
 
 	//Create resources
@@ -274,7 +272,7 @@ struct RaytracingInterface : public ViewportInterface {
 			Vec4f32(0, -5, 0, 1),
 			Vec4f32(7, 0, 0, 1),
 			Vec4f32(-5, 0, 0, 1),
-			Vec4f32(0, 0, 10, 1)
+			Vec4f32(0, 2, 0, 1)
 		};
 
 		sphereData = {
@@ -356,7 +354,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Dispatch args"),
 			ShaderBuffer::Info(
 				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("dispatchArgs"), ShaderBufferLayout(0, sizeof(DispatchArgs)) } }
+				{ { NAME("dispatchArgs"), ShaderBufferLayout(0, sizeof(Vec4u32) * 2) } }
 			)
 		};
 
@@ -464,7 +462,7 @@ struct RaytracingInterface : public ViewportInterface {
 			p0,
 			p1,
 			p2,
-			{ 0, 1, 0 },	//TODO: Doesn't work if the light dir changes
+			{ 0, 0.5, 1 },
 			2
 		};
 
@@ -499,6 +497,15 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		reflectionRayData.release();
+		reflectionRayData = {
+			g, NAME("Reflection ray buffer"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				{ { NAME("reflectionRays"), ShaderBufferLayout(0, sizeof(RayPayload) * size.prod()) } }
+			)
+		};
+
 		positionBuffer.release();
 		positionBuffer = {
 			g, NAME("Position buffer"),
@@ -511,9 +518,10 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D_ARRAY });
 		raytracingDescriptors->updateDescriptor(6, { shadowRayData, 0 });
 		raytracingDescriptors->updateDescriptor(10, { positionBuffer, 0 });
+		raytracingDescriptors->updateDescriptor(11, { reflectionRayData, 0 });
 		raytracingDescriptors->flush(0, 1);
 		raytracingDescriptors->flush(6, 1);
-		raytracingDescriptors->flush(10, 1);
+		raytracingDescriptors->flush(10, 2);
 		
 		fillCommandList();
 
@@ -535,12 +543,20 @@ struct RaytracingInterface : public ViewportInterface {
 			BindDescriptors(raytracingDescriptors),
 			Dispatch(res.cast<Vec2u32>()),
 
-			//Dispatch shadows
+			//Prepare dispatch
 
-			BindPipeline(dispatchShadowSetup),
+			BindPipeline(dispatchSetup),
 			Dispatch(1),
+
+			//Shadows
+
 			BindPipeline(shadowPipeline),
-			DispatchIndirect(dispatchArgs),
+			DispatchIndirect(dispatchArgs, 0),
+
+			//Reflections
+
+			BindPipeline(reflectionPipeline),
+			DispatchIndirect(dispatchArgs, 1),
 
 			//Do gamma and color correction
 
@@ -570,15 +586,15 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (modified & 2) {
 
-			Buffer dispatchShadow;
-			oicAssert("Couldn't load shadow_dispatch shader", oic::System::files()->read(pipelines[1], dispatchShadow));
+			Buffer dispatch;
+			oicAssert("Couldn't load dispatch shader", oic::System::files()->read(pipelines[1], dispatch));
 
-			dispatchShadowSetup.release();
-			dispatchShadowSetup = {
-				g, NAME("Dispatch shadow pipeline"),
+			dispatchSetup.release();
+			dispatchSetup = {
+				g, NAME("Dispatch pipeline"),
 				Pipeline::Info(
 					PipelineFlag::OPTIMIZE,
-					dispatchShadow,
+					dispatch,
 					pipelineLayout,
 					Vec3u32{ 1, 1, 1 }
 				)
@@ -615,6 +631,23 @@ struct RaytracingInterface : public ViewportInterface {
 					postProcess,
 					pipelineLayout,
 					Vec3u32{ 8, 8, 1 }
+				)
+			};
+		}
+
+		if (modified & 16) {
+
+			Buffer reflectionShader;
+			oicAssert("Couldn't load reflection shader", oic::System::files()->read(pipelines[4], reflectionShader));
+
+			reflectionPipeline.release();
+			reflectionPipeline = {
+				g, NAME("Reflection pipeline"),
+				Pipeline::Info(
+					PipelineFlag::OPTIMIZE,
+					reflectionShader,
+					pipelineLayout,
+					Vec3u32{ 64, 1, 1 }
 				)
 			};
 		}

@@ -9,11 +9,12 @@ layout(binding=5, std140) readonly buffer Counters {
 };
 
 layout(binding=6, std430) writeonly buffer DispatchIndirect {
-	uvec3 dispatchIndirect[];
+	uvec4 dispatchIndirect[];
 };
 
 //Handling intersection
 
 void main() {
-	dispatchIndirect[0] = uvec3(uint(ceil(float(shadowCounter) / 64)), 1, 1);
+	dispatchIndirect[0] = uvec4(uint(ceil(float(shadowCounter) / 64)), 1, 1, 1);
+	dispatchIndirect[1] = uvec4(uint(ceil(float(reflrectionCounter) / 64)), 1, 1, 1);
 }

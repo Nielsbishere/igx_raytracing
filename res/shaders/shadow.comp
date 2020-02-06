@@ -6,7 +6,8 @@
 
 layout(binding=0, outputFormat) uniform image2DArray rayOutput;
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+const uint threadCount = 64;
+layout(local_size_x = threadCount, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding=4, std140) readonly buffer ShadowRays {
 	RayPayload shadowRays[];
@@ -25,10 +26,12 @@ layout(binding=5, std140) readonly buffer Counters {
 
 void main() {
 
-	const uint shadowId = gl_GlobalInvocationID.x;
+	uint threadId = gl_GlobalInvocationID.x;
 
-	if(shadowId >= shadowCounter)
+	if(threadId >= shadowCounter)
 		return;
+
+	const uint shadowId = threadId;
 
 	const RayPayload payload = shadowRays[shadowId];
 
@@ -42,17 +45,27 @@ void main() {
 		vec4(decompressNormal(payload.dir), 1)
 	);
 
+	//TODO: Reason for the artifacts is probably the end distance.
+	//		how do I solve it? Attenuation shouldn't be taken into account 
+
 	if(traceOcclusion(ray, payload.maxDist))
 		return;
 
 	//Store
 
-	int layer = int(payload.flagLayer & 0xFFFF);
+	#ifdef AVOID_CONFLICTS
 
-	vec3 color = payload.color;
+		int layer = int(payload.flagLayer & 0xFFFF);
 
-	if(layer == 0)
-		color += imageLoad(rayOutput, ivec3(loc, 0)).rgb;
+		vec3 color = payload.color;
 
-	imageStore(rayOutput, ivec3(loc, layer), vec4(color, 0));
+		if(layer == 0)
+			color += imageLoad(rayOutput, ivec3(loc, 0)).rgb;
+
+		imageStore(rayOutput, ivec3(loc, layer), vec4(color, 0));
+
+	#else
+		const vec3 color = payload.color + imageLoad(rayOutput, ivec3(loc, 0)).rgb;
+		imageStore(rayOutput, ivec3(loc, 0), vec4(color, 0));
+	#endif
 }

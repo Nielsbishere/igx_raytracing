@@ -1,6 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "defines.glsl"
+#include "utils.glsl"
 
 layout(binding=0, outputFormat) uniform image2DArray rayOutput;
 
@@ -11,7 +12,7 @@ layout(binding=0, std140) uniform GPUData {
 	vec4 p1;
 	vec4 p2;
 
-	vec3 lightDir;
+	vec3 skyboxColor;
 	float exposure;
 };
 
@@ -32,8 +33,12 @@ void main() {
 
 	vec3 color = imageLoad(rayOutput, loc).rgb;
 
-	for(int l = 1; l < size.z; ++l)
-		color += imageLoad(rayOutput, loc + ivec3(0, 0, l)).rgb;
+	#ifdef AVOID_CONFLICTS
+
+		for(int l = 1; l < size.z; ++l)
+			color += imageLoad(rayOutput, loc + ivec3(0, 0, l)).rgb;
+
+	#endif
 
 	//Exposure mapping
 
