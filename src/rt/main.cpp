@@ -16,6 +16,10 @@ using namespace igx::ui;
 using namespace igx;
 using namespace oic;
 
+#define THREADS 64
+#define THREADS_X 8
+#define THREADS_Y 8
+
 struct RaytracingInterface : public ViewportInterface {
 
 	Graphics& g;
@@ -33,7 +37,7 @@ struct RaytracingInterface : public ViewportInterface {
 	ShaderBuffer 
 		raygenData, sphereData, planeData, triangleData, lightData,
 		materialData, shadowRayData, counterBuffer, dispatchArgs, positionBuffer,
-		reflectionRayData;
+		reflectionRayData, cubeData;
 
 	Vec2u32 res;
 	Vec3f32 eye{ 0, 0, 7 }, eyeDir = { 0, 0, -1 };
@@ -41,6 +45,8 @@ struct RaytracingInterface : public ViewportInterface {
 
 	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = f32(70_deg);
+
+	static constexpr usz sphereCount = 7;
 
 	u8 pipelineUpdates{};
 
@@ -60,9 +66,12 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//A ray payload
 	struct RayPayload {
-		Vec3f32 pos;	u32 rayFlag;
-		Vec3f32 dir;	u32 screenX;
-		Vec3f32 col;	u32 screenY;
+
+		Vec2f32 dir;				//Vector direction in spherical coords
+		u32 screenCoord;
+		f32 maxDist;
+
+		Vec2u32 color, padding;
 	};
 
 	//The counter buffer
@@ -115,6 +124,18 @@ struct RaytracingInterface : public ViewportInterface {
 		u32 padding;
 	};
 
+	//Cubes
+
+	struct Cube {
+
+		Vec3f32 start;
+		u32 object;
+
+		Vec3f32 end;
+		u32 material;
+
+	};
+
 	bool isFileListening{};
 
 	static constexpr u16
@@ -134,7 +155,8 @@ struct RaytracingInterface : public ViewportInterface {
 		RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(Vec4u32)),
 		RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
 		RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec3f32)),
-		RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload))
+		RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
+		RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube)),
 	};
 
 	//Create resources
@@ -265,21 +287,11 @@ struct RaytracingInterface : public ViewportInterface {
 
 		//Sphere y are inversed?
 
-		Vec4f32 spheres[] = {
-			Vec4f32(0, 0, 5, 1),
-			Vec4f32(0, 0, -5, 1),
-			Vec4f32(3, 0, 0, 1),
-			Vec4f32(0, -5, 0, 1),
-			Vec4f32(7, 0, 0, 1),
-			Vec4f32(-5, 0, 0, 1),
-			Vec4f32(0, 2, 0, 1)
-		};
-
 		sphereData = {
 			g, NAME("Sphere data"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("spheres"), ShaderBufferLayout(0, Buffer((u8*)spheres, (u8*)spheres + sizeof(spheres))) } }
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::CPU_WRITE,
+				{ { NAME("spheres"), ShaderBufferLayout(0, sphereCount * sizeof(Vec4f32)) } }
 			)
 		};
 
@@ -295,11 +307,22 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		Cube cubes[] = {
+			{ { -3, -3, -3 }, 0, { -2, -2, -2 }, 0 }
+		};
+
+		cubeData = {
+			g, NAME("Cube data"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
+				{ { NAME("cubes"), ShaderBufferLayout(0, Buffer((u8*)cubes, (u8*)cubes + sizeof(cubes))) } }
+			)
+		};
+
 		Triangle triangles[] = {
-			{ }
-			/*{ Vec3f32(-1, 1, 0), 0, Vec3f32(1, 1, 0), 0, Vec3f32(1, -1, 0), 0 },
-			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 0), 0 },
-			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 0), 0 }*/
+			{ Vec3f32(1, 1, 0), 0, Vec3f32(-1, 1, 0), 0, Vec3f32(1, -1, 1), 0 },
+			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 1), 0 },
+			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 1), 0 }
 		};
 
 		triangleData = {
@@ -329,9 +352,9 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Light lights[] = {
-			{ { 0, 0, 0 }, 0, { 0, 1, 0 }, 0, { 0.2f, 0.1f, 0.2f }, 0 },
-			{ { 0, 0, 0 }, 5, { 0, 0, 0 }, 1, { 1.f, 1.f, 1.f }, 0 },
-			{ { -2, -2, -2 }, 7, { 0, 0, 0 }, 1, { 0.5f, 0.25f, 1.f }, 0 }
+			{ { 0, 0, 0 }, 0, { 0, 1, 0 }, 0, { 0.4f, 0.2f, 0.4f }, 0 },
+			{ { 0, 0, 0 }, 5, { 0, 0, 0 }, 1, { 1.5f, 1.5f, 1.5f }, 0 },
+			{ { -2, -2, -2 }, 7, { 0, 0, 0 }, 1, { 0.7f, 0.5f, 1.5f }, 0 }
 		};
 
 		lightData = {
@@ -404,6 +427,7 @@ struct RaytracingInterface : public ViewportInterface {
 		descriptorsInfo.resources[7] = { counterBuffer, 0 };
 		descriptorsInfo.resources[8] = { dispatchArgs, 0 };
 		descriptorsInfo.resources[9] = { lightData, 0 };
+		descriptorsInfo.resources[12] = { cubeData, 0 };
 
 		raytracingDescriptors = {
 			g, NAME("Raytracing descriptors"),
@@ -579,7 +603,7 @@ struct RaytracingInterface : public ViewportInterface {
 					PipelineFlag::OPTIMIZE,
 					raygenComp,
 					pipelineLayout,
-					Vec3u32{ 8, 8, 1 }
+					Vec3u32{ THREADS_X, THREADS_Y, 1 }
 				)
 			};
 		}
@@ -613,7 +637,7 @@ struct RaytracingInterface : public ViewportInterface {
 					PipelineFlag::OPTIMIZE,
 					shadow,
 					pipelineLayout,
-					Vec3u32{ 64, 1, 1 }
+					Vec3u32{ THREADS, 1, 1 }
 				)
 			};
 		}
@@ -647,7 +671,7 @@ struct RaytracingInterface : public ViewportInterface {
 					PipelineFlag::OPTIMIZE,
 					reflectionShader,
 					pipelineLayout,
-					Vec3u32{ 64, 1, 1 }
+					Vec3u32{ THREADS, 1, 1 }
 				)
 			};
 		}
@@ -662,8 +686,23 @@ struct RaytracingInterface : public ViewportInterface {
 		g.present(raytracingOutput, 0, swapchain, cl);
 	}
 
+	f64 time = 0;
+
 	//Update eye
 	void update(const ViewportInfo* vi, f64 dt) final override {
+
+		Vec4f32 spheres[sphereCount] = {
+			Vec4f32(0, 0, 5, 1),
+			Vec4f32(0, 0, -5, 1),
+			Vec4f32(3, 0, 0, 1),
+			Vec4f32(0, -5, 0, 1),
+			Vec4f32(7, 0, 0, 1),
+			Vec4f32(-5 + f32(sin(time)), f32(cos(time)), 0, 1),
+			Vec4f32(f32(sin(time)), 2 + f32(cos(time)), 0, 1)
+		};
+
+		std::memcpy(sphereData->getBuffer(), spheres, sizeof(spheres));
+		sphereData->flush(0, sizeof(spheres));
 
 		//TODO: Check artifacts at top of the screen
 
@@ -678,7 +717,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		Vec3f32 d{};
 
-		bool isShift{};
+		bool isShift{}, isCtrl{};
 
 		for (auto* dvc : vi->devices)
 			if (dvc->isType(InputDevice::KEYBOARD)) {
@@ -695,6 +734,9 @@ struct RaytracingInterface : public ViewportInterface {
 				if (dvc->isDown(Key::KEY_SHIFT))
 					isShift = true;
 
+				if (dvc->isDown(Key::KEY_CTRL))
+					isCtrl = true;
+
 			}
 			else if (dvc->isType(InputDevice::MOUSE)) {
 
@@ -703,6 +745,11 @@ struct RaytracingInterface : public ViewportInterface {
 				if (delta)
 					speed = oic::Math::clamp(speed * 1 + (delta / 1024), 0.5, 5.0);
 			}
+
+		if(isCtrl)
+			time += dt * 0.75;
+		else
+			time += dt * 0.05;
 
 		if (d.any()) {
 

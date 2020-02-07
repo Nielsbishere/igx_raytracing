@@ -21,7 +21,7 @@ struct Monitor {
 	vec4 sampleB_sizeInMeters;
 };
 
-layout(binding=0, std430) buffer Monitors {
+layout(binding=0, std140) buffer Monitors {
 	Monitor monitors[];
 };
 

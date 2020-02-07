@@ -7,10 +7,17 @@
 
 layout(binding=0, std140) uniform GPUData {
 
-	vec4 eye;
-	vec4 p0;
-	vec4 p1;
-	vec4 p2;
+	vec3 eye;
+	float pad0;
+
+	vec3 p0;
+	float pad1;
+
+	vec3 p1;
+	float pad2;
+
+	vec3 p2;
+	float pad3;
 
 	vec3 skyboxColor;
 	float exposure;
@@ -18,22 +25,22 @@ layout(binding=0, std140) uniform GPUData {
 
 layout(binding=0, outputFormat) writeonly uniform image2DArray rayOutput;
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
 
 layout(binding=3, std140) readonly buffer Materials {
 	Material materials[];
 };
 
-layout(binding=4, std430) writeonly buffer ShadowRays {
+layout(binding=4, std140) writeonly buffer ShadowRays {
 	RayPayload shadowRays[];
 };
 
-layout(binding=5, std430) buffer Counters {
+layout(binding=5, std140) buffer Counters {
 	uint shadowCounter;
 	uint reflrectionCounter;
 };
 
-layout(binding=7, std430) readonly buffer Lights {
+layout(binding=7, std140) readonly buffer Lights {
 	Light lights[];
 };
 
@@ -41,7 +48,7 @@ layout(binding=8, std140) writeonly buffer PositionBuffer {
 	vec3 positions[];
 };
 
-layout(binding=9, std430) writeonly buffer ReflectionRays {
+layout(binding=9, std140) writeonly buffer ReflectionRays {
 	RayPayload reflectionRays[];
 };
 
@@ -70,71 +77,69 @@ vec3 shadeLight(
 ) {
 
 	vec3 l = light.dir;
-	float dist = 1;
+	float invSquareDist = 1;
 	float maxDist = noHit;
 
 	if(light.type == LightType_Point) {
 
-		const vec3 L = pos - light.pos;
-		const float dst = length(L);
-		dist = dst / light.rad;
-
-		//If it's out of range, don't bother with shadow rays
-
-		if(dist > 1)
-			return vec3(0, 0, 0);
-
-		dist = 1 - dist;
+		l = pos - light.pos;
+		const float dst = length(l);
+		invSquareDist = max(1 - dst / light.rad, 0);		//TODO: This should be dst^2
 
 		//Calculate params for point light shadows
 
-		l = L * (1 / dst);
-		maxDist = light.rad;
+		maxDist = dst;				//TODO: This is along the direction of the light, it should be along the distance of the ray
 	}
+
+	l = normalize(l);
 
 	//Calculate color
 
 	float k = m.roughness + 1;
 	k *= k / 8;
+	
+	const float NdotL = max(dot(n, l), 0);
 
-	const vec3 color = cookTorrance(F0, m.albedo, light, n, l, v, NdotV, dist, m.roughness, m.metallic, k) * ao;
+	const vec3 color = cookTorrance(F0, m.albedo, light, n, l, v, NdotV, invSquareDist, m.roughness, m.metallic, k, NdotL) * ao;
 
 	//Only shoot shadows for materials that allow it 
 
 	#ifndef DISABLE_SHADOWS
 		if((m.materialInfo & MaterialInfo_NoCastShadows) == 0) {
 		
+			#ifdef AVOID_CONFLICTS
+
+				if(id >= maxLayers)
+					return color;
+
+			#endif
+
 			const uint shadowId = atomicAdd(shadowCounter, 1);
 
 			//If out of bounds, assume unshadowed
-		
+
+			if(shadowId >= shadowRays.length())
+				return color;
+
 			//Shoot shadow ray
 
 			#if defined(AVOID_CONFLICTS)
 
-				if(shadowId >= shadowRays.length() || id >= maxLayers)
-					return color;
-
 				shadowRays[shadowId] = RayPayload(
-					compressNormal(-l),
+					-l,
 					screenPos.x << 16 | screenPos.y,
-					/*0 << 16 | */ id,
-					color,
+					uvec2(packHalf2x16(color.xy), packHalf2x16(vec2(0, color.z)) | id),
 					maxDist
 				);
 
 				++id;
 
 			#else
-				
-				if(shadowId >= shadowRays.length())
-					return color;
 
 				shadowRays[shadowId] = RayPayload(
-					compressNormal(-l),
+					-l,
 					screenPos.x << 16 | screenPos.y,
-					/*0 << 16 | */ 0,
-					color,
+					uvec2(packHalf2x16(color.xy), packHalf2x16(vec2(0, color.z))),
 					maxDist
 				);
 
@@ -159,10 +164,9 @@ vec3 traceReflection(const vec3 n, const vec3 v, const uvec2 screenPos, const ui
 			uint reflectionId = atomicAdd(reflrectionCounter, 1);
 
 			reflectionRays[reflectionId] = RayPayload(
-				compressNormal(reflect(v, n)),
+				reflect(v, n),
 				screenPos.x << 16 | screenPos.y,
-				/*0 << 16 | */ 0,
-				kS,
+				uvec2(packHalf2x16(kS.xy), packHalf2x16(vec2(0, kS.z))),
 				noHit
 			);
 
@@ -180,15 +184,13 @@ vec3 shade(
 	const Material m,
 	const vec3 pos,
 	const vec3 n, 
+	const vec3 v,
+	const float NdotV,
 	const uvec2 screenPos,
 	const uint maxLayers,
 	const uint width
 ) {
 	const float ao = 1;				//TODO:
-
-	const vec3 v = normalize(pos - eye.xyz);
-
-	const float NdotV = max(dot(n, v), 0);
 
 	const vec3 F0 = mix(vec3(0.04), m.albedo, m.metallic);
 
@@ -206,13 +208,13 @@ vec3 shade(
 	for(uint i = 0; i < lights.length(); ++i) {
 	
 		#if defined(AVOID_CONFLICTS)
-			lighting += shadeLight(F0, m, lights[i], pos, -n, v, screenPos, id, maxLayers, ao, NdotV);
+			lighting += shadeLight(F0, m, lights[i], pos, n, v, screenPos, id, maxLayers, ao, NdotV);
 		#else
-			lighting += shadeLight(F0, m, lights[i], pos, -n, v, screenPos, maxLayers, ao, NdotV);
+			lighting += shadeLight(F0, m, lights[i], pos, n, v, screenPos, maxLayers, ao, NdotV);
 		#endif
 	}
 
-	vec3 reflection = traceReflection(-n, v, screenPos, width, NdotV, kS);
+	vec3 reflection = traceReflection(n, v, screenPos, width, NdotV, kS);
 
 	return (m.ambient + kD / pi) * ao * m.albedo + reflection + lighting + m.emissive;
 }
@@ -223,8 +225,8 @@ vec3 onMiss(const Ray r) {
 	return skyboxColor;
 }
 
-vec3 onHit(const vec4 pos, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos, const uint width, const uint maxLayers) {
-	return shade(materials[material], pos.xyz, normal, screenPos, width, maxLayers);
+vec3 onHit(const vec3 pos, const vec3 hit, const vec3 normal, const vec3 v, const float NdotV, const uint material, const uvec2 screenPos, const uint width, const uint maxLayers) {
+	return shade(materials[material], pos, normal, v, NdotV, screenPos, width, maxLayers);
 }
 
 //Calculating intersection
@@ -234,10 +236,13 @@ vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint mate
 	if(hit.z == noHit)
 		return onMiss(r);
 
-	const vec4 position = r.pos + r.dir * hit.z;
-	outPos = position.xyz + normal * epsilon;
+	const vec3 position = r.pos + r.dir * hit.z;
+	outPos = position + normal * epsilon;
+	
+	const vec3 v = normalize(position - eye);
+	const float NdotV = max(dot(-normal, v), 0);
 
-	return onHit(position, hit, normal, material, screenPos, width, maxLayers);
+	return onHit(position, hit, normal, v, NdotV, material, screenPos, width, maxLayers);
 }
 
 vec3 trace(const Ray ray, const uvec2 screenPos, inout vec3 position, const uint width, const uint maxLayers) {
@@ -246,8 +251,8 @@ vec3 trace(const Ray ray, const uvec2 screenPos, inout vec3 position, const uint
 	//		then intersect that geometry; not all spheres
 
 	vec3 hit = vec3(0, 0, noHit);
-	vec3 normal = vec3(0, 0, 0);
-	uint material = 0;
+	vec3 normal;
+	uint material;
 
 	traceGeometry(ray, hit, normal, material);
 
@@ -269,23 +274,23 @@ void main() {
 
 	//Shoot ray
 
-	const vec4 right = p1 - p0;
-	const vec4 up = p2 - p0;
+	const vec3 right = p1 - p0;
+	const vec3 up = p2 - p0;
 	
 	const vec2 uv = (vec2(loc) + 0.5) / vec2(size.xy);
-	const vec4 rayPos = p0 + uv.x * right + uv.y * up;
+	const vec3 rayPos = p0 + uv.x * right + uv.y * up;
 
 	const Ray ray = Ray(
-		rayPos,
-		normalize(rayPos - eye)
+		rayPos, 0,
+		normalize(rayPos - eye), 0
 	);
 
-	vec3 pos = vec3(noHit, noHit, noHit);
+	vec3 pos;
 	const vec3 color = trace(ray, loc, pos, size.x, size.z);
 
 	//Store
 
-	const uint loc1D = to1D(loc, size.xy);
+	const uint loc1D = loc.x + loc.y * size.x;
 	positions[loc1D] = pos;
 
 	imageStore(rayOutput, ivec3(loc, 0), vec4(color, 0));

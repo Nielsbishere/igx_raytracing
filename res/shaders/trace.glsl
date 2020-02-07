@@ -12,19 +12,16 @@ layout(binding=2, std140) readonly buffer Triangles {
 	Triangle triangles[];
 };
 
-
-//TODO:
-//const uint RayFlag_Recurse = 1;		//Turned on if recursion for this ray is enabled
-//const uint RayFlag_CullBack = 2;	//Turned on if intersections with negative normals are ignored
-//const uint RayFlag_CullFront = 4;	//Turned on if intersections with positive normals are ignored
+layout(binding=10, std140) readonly buffer Cubes {
+	Cube cubes[];
+};
 
 struct RayPayload {
 
-	vec2 dir;				//Vector direction in spherical coords
+	vec3 dir;				//Vector direction in spherical coords
 	uint screenCoord;
-	uint flagLayer;
 
-	vec3 color;				//Color to be multiplied into result
+	uvec2 color;			//Color packed into 2 halfs, alpha used for layer
 	float maxDist;
 
 };
@@ -36,9 +33,12 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 	#ifdef ALLOW_SPHERES
 
 	for(int i = 0; i < spheres.length(); ++i) {
-		if(rayIntersectSphere(ray, spheres[i], hit)) {
+
+		const vec4 sphere = spheres[i];
+
+		if(rayIntersectSphere(ray, sphere, hit)) {
 			material = i;
-			normal = normalize(hit.z * ray.dir.xyz + ray.pos.xyz - spheres[i].xyz);
+			normal = normalize(sphere.xyz - (hit.z * ray.dir + ray.pos));
 		}
 	}
 
@@ -49,7 +49,7 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 	for(int i = 0; i < planes.length(); ++i) {
 		if(rayIntersectPlane(ray, planes[i], hit)) {
 			material = i;
-			normal = -planes[i].xyz;
+			normal = normalize(planes[i].xyz);
 		}
 	}
 
@@ -57,10 +57,25 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 
 	#ifdef ALLOW_TRIANGLES
 
+	//Flat shading for now TODO: Normals
+
 	for(int i = 0; i < triangles.length(); ++i) {
 		if(rayIntersectTri(ray, triangles[i], hit)) {
 			material = triangles[i].material;
-			normal = -cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0);	//Flat shading for now TODO: Normals
+			normal = normalize(cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0));
+		}
+	}
+
+	#endif
+
+	#ifdef ALLOW_CUBES
+
+	//TODO: Normals
+
+	for(int i = 0; i < cubes.length(); ++i) {
+		if(rayIntersectCube(ray, cubes[i], hit)) {
+			material = cubes[i].material;
+			normal = normalize((cubes[i].end + cubes[i].start) * 0.5 - (hit.z * ray.dir + ray.pos));
 		}
 	}
 
@@ -90,6 +105,15 @@ bool traceOcclusion(const Ray ray, const float maxDist) {
 
 	for(int i = 0; i < triangles.length(); ++i)
 		rayIntersectTri(ray, triangles[i], hit);
+
+	#endif
+
+	#ifdef ALLOW_CUBES
+
+	//TODO: Crashes NVIDIA!
+
+	//for(int i = 0; i < cubes.length(); ++i)
+	//	rayIntersectCube(ray, cubes[i], hit);
 
 	#endif
 

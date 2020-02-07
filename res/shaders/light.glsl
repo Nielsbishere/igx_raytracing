@@ -72,13 +72,12 @@ vec3 cookTorrance(
 	const vec3 l,
 	const vec3 v,
 	const float NdotV, 
-	const float dist,
+	const float invSquareDist,
 	const float roughness,
 	const float metallic,
-	const float k
+	const float k,
+	const float NdotL
 ) {
-
-	const float NdotL = max(dot(n, l), 0);
 
 	const vec3 h = normalize(l + v);
 
@@ -91,5 +90,5 @@ vec3 cookTorrance(
 
 	const vec3 color = kD * albedo + kS;
 
-	return color * light.col * dist * NdotL;
+	return color * light.col * invSquareDist * NdotL;
 }

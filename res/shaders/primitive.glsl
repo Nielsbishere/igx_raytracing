@@ -1,11 +1,11 @@
 
 const float noHit = 3.4028235e38;
-const float epsilon = 1e-6;		//epsilon for offsets
-const float delta = 1e-5;		//epsilon for calculations
+const float epsilon = 1e-3;		//epsilon for offsets
+const float delta = 1e-2;		//epsilon for calculations
 
 //Define very often used types
 
-struct Ray { vec4 pos; vec4 dir; };
+struct Ray { vec3 pos; float pad0; vec3 dir; float pad1; };
 
 struct Triangle {
 
@@ -19,15 +19,25 @@ struct Triangle {
 	uint padding;
 };
 
+struct Cube {
+
+	vec3 start;
+	uint object;
+
+	vec3 end;
+	uint material;
+
+};
+
 
 //Ray intersections
 
 bool rayIntersectSphere(const Ray r, const vec4 sphere, inout vec3 hit) {
 
-	const vec3 dif = sphere.xyz - r.pos.xyz;
-	const float t = dot(dif, r.dir.xyz);
+	const vec3 dif = sphere.xyz - r.pos;
+	const float t = dot(dif, r.dir);
 
-	const vec3 Q = dif - t * r.dir.xyz;
+	const vec3 Q = dif - t * r.dir;
 	const float Q2 = dot(Q, Q);
 
 	const bool outOfSphere = Q2 > sphere.w;
@@ -43,7 +53,7 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout vec3 hit) {
 
 bool rayIntersectPlane(const Ray r, const vec4 plane, inout vec3 hit) {
 
-	float hitT = -(dot(r.pos.xyz, plane.xyz) + plane.w) / dot(r.dir.xyz, plane.xyz);
+	float hitT = -(dot(r.pos, plane.xyz) + plane.w) / dot(r.dir, plane.xyz);
 
 	if(hitT >= delta && hitT < hit.z) {
 		hit.z = hitT;
@@ -58,19 +68,19 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
 	const vec3 p1_p0 = tri.p1 - tri.p0;
 	const vec3 p2_p0 = tri.p2 - tri.p0;
 	
-	const vec3 h = cross(r.dir.xyz, p2_p0);
+	const vec3 h = cross(r.dir, p2_p0);
 	const float a = dot(p1_p0, h);
 	
 	if (abs(a) < delta) return false;
 	
 	const float f = 1 / a;
-	const vec3 s = r.pos.xyz - tri.p0;
+	const vec3 s = r.pos - tri.p0;
 	const float u = f * dot(s, h);
 	
 	if (u < 0 || u > 1) return false; 
 	
 	const vec3 q = cross(s, p1_p0);
-	const float v = f * dot(r.dir.xyz, q);
+	const float v = f * dot(r.dir, q);
 	
 	if (v < 0 || u + v > 1) return false;
 	
@@ -79,6 +89,23 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
 	if (t <= delta || t >= 1 / delta || t >= hit.z) return false;
 
 	hit = vec3(u, v, t);
+	return true;
+}
+
+bool rayIntersectCube(const Ray r, const Cube cube, inout vec3 hit) {
+
+	vec3 revDir = 1 / r.dir;
+
+	vec3 startDir = (cube.start - r.pos) * revDir;
+	vec3 endDir = (cube.end - r.pos) * revDir;
+
+	float tmin = max(max(min(startDir.x, endDir.x), min(startDir.y, endDir.y)), min(startDir.z, endDir.z));
+	float tmax = min(min(max(startDir.x, endDir.x), max(startDir.y, endDir.y)), max(startDir.z, endDir.z));
+
+	if(tmax < 0 || tmin > tmax || tmin > hit.z)
+		return false;
+
+	hit.z = tmin;
 	return true;
 }
 

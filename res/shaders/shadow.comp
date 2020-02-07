@@ -6,8 +6,7 @@
 
 layout(binding=0, outputFormat) uniform image2DArray rayOutput;
 
-const uint threadCount = 64;
-layout(local_size_x = threadCount, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = THREADS, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding=4, std140) readonly buffer ShadowRays {
 	RayPayload shadowRays[];
@@ -39,10 +38,11 @@ void main() {
 	const uvec2 size = uvec2(imageSize(rayOutput));
 
 	//Shoot ray
-
+	
+	const uint loc1D = loc.x + loc.y * size.x;
 	const Ray ray = Ray(
-		vec4(positions[to1D(loc, size)], 1),
-		vec4(decompressNormal(payload.dir), 1)
+		positions[loc1D], 0,
+		payload.dir, 0
 	);
 
 	//TODO: Reason for the artifacts is probably the end distance.
@@ -53,19 +53,21 @@ void main() {
 
 	//Store
 
+	const int layer = int(payload.color.y & 0xFFFF);
+
+	const vec3 pcolor = vec3(unpackHalf2x16(payload.color.x), unpackHalf2x16(payload.color.y).y);
+
 	#ifdef AVOID_CONFLICTS
 
-		int layer = int(payload.flagLayer & 0xFFFF);
-
-		vec3 color = payload.color;
+		vec3 color = pcolor;
 
 		if(layer == 0)
 			color += imageLoad(rayOutput, ivec3(loc, 0)).rgb;
 
-		imageStore(rayOutput, ivec3(loc, layer), vec4(color, 0));
+		imageStore(rayOutput, ivec3(loc, layer), vec4(pcolor, 0));
 
 	#else
-		const vec3 color = payload.color + imageLoad(rayOutput, ivec3(loc, 0)).rgb;
+		const vec3 color = pcolor + imageLoad(rayOutput, ivec3(loc, 0)).rgb;
 		imageStore(rayOutput, ivec3(loc, 0), vec4(color, 0));
 	#endif
 }
