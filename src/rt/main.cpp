@@ -12,13 +12,13 @@
 #include "input/mouse.hpp"
 #include "utils/math.hpp"
 
+#define uint u32
+#include "../res/shaders/defines.glsl"
+#undef uint
+
 using namespace igx::ui;
 using namespace igx;
 using namespace oic;
-
-#define THREADS 64
-#define THREADS_X 8
-#define THREADS_Y 8
 
 struct RaytracingInterface : public ViewportInterface {
 
@@ -154,7 +154,7 @@ struct RaytracingInterface : public ViewportInterface {
 		RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
 		RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(Vec4u32)),
 		RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
-		RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec3f32)),
+		RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 		RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
 		RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube)),
 	};
@@ -491,7 +491,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		memcpy(raygenData->getBuffer(), &buffer, sizeof(buffer));
-		raygenData->flush(0, sizeof(buffer));
+		raygenData->flush({ { 0, sizeof(buffer) } });
 	}
 
 	//Update size of surfaces
@@ -535,7 +535,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Position buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("positionBuffer"), ShaderBufferLayout(0, sizeof(Vec3f32) * size.prod()) } }
+				{ { NAME("positionBuffer"), ShaderBufferLayout(0, sizeof(Vec4f32) * size.prod()) } }
 			)
 		};
 
@@ -543,9 +543,7 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->updateDescriptor(6, { shadowRayData, 0 });
 		raytracingDescriptors->updateDescriptor(10, { positionBuffer, 0 });
 		raytracingDescriptors->updateDescriptor(11, { reflectionRayData, 0 });
-		raytracingDescriptors->flush(0, 1);
-		raytracingDescriptors->flush(6, 1);
-		raytracingDescriptors->flush(10, 2);
+		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 } });
 		
 		fillCommandList();
 
@@ -702,7 +700,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		std::memcpy(sphereData->getBuffer(), spheres, sizeof(spheres));
-		sphereData->flush(0, sizeof(spheres));
+		sphereData->flush({ { 0, sizeof(spheres) } });
 
 		//TODO: Check artifacts at top of the screen
 
