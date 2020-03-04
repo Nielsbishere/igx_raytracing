@@ -1,17 +1,18 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "defines.glsl"
-#include "utils.glsl"
+#include "light.glsl"
+#include "primitive.glsl"
 
-layout(binding=0, outputFormat) uniform image2DArray rayOutput;
+layout(binding=0, outputFormat) uniform image2D rayOutput;
 
 layout(binding=0, std140) uniform GPUData {
 
 	vec3 eye;
-	float pad0;
+	uint width;
 
 	vec3 p0;
-	float pad1;
+	uint height;
 
 	vec3 p1;
 	float pad2;
@@ -25,27 +26,47 @@ layout(binding=0, std140) uniform GPUData {
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
+layout(binding=7, std140) readonly buffer Lights {
+	Light lights[];
+};
+
+struct Position { vec3 pos; uint shadowStart; };
+
+layout(binding=8, std140) readonly buffer PositionBuffer {
+	Position positions[];
+};
+
+layout(binding=5, std140) readonly buffer Counters {
+	uint shadowCounter;
+	uint reflrectionCounter;
+};
+
+layout(binding=4, std140) readonly buffer ShadowRays {
+	RayPayload shadowRays[];
+};
+
 //Handling intersection
 
 void main() {
 
 	//Get ray position
 
-	const ivec3 size = imageSize(rayOutput);
-	const ivec3 loc = ivec3(gl_GlobalInvocationID.xyz);
+	const ivec2 loc = ivec2(gl_GlobalInvocationID.xy);
 
-	if(loc.x >= size.x || loc.y >= size.y) return;
+	if(loc.x >= width || loc.y >= height) return;
 
 	//Store
 
 	vec3 color = imageLoad(rayOutput, loc).rgb;
 
-	#ifdef AVOID_CONFLICTS
+	const uint loc1D = loc.x + loc.y * width;
+	const uint shadowStart = positions[loc1D].shadowStart;
 
-		for(int l = 1; l < size.z; ++l)
-			color += imageLoad(rayOutput, loc + ivec3(0, 0, l)).rgb;
-
-	#endif
+	if(shadowStart != noRayHit)
+		for(uint i = 0; i < lights.length(); ++i) {
+			const RayPayload shadowRay = shadowRays[shadowStart + i];
+			color += shadowRay.color * float(shadowRay.loc1D == 0);
+		}
 
 	//Exposure mapping
 

@@ -3,9 +3,28 @@ const float noHit = 3.4028235e38;
 const float epsilon = 1e-3;		//epsilon for offsets
 const float delta = 1e-2;		//epsilon for calculations
 
+const uint shadowHit = 0xFFFFFFFF;		//loc1D is set to this when a shadow hit
+const uint noRayHit = 0xFFFFFFFF;		//loc1D is set to this when a primary didn't hit
+
 //Define very often used types
 
-struct Ray { vec3 pos; float pad0; vec3 dir; float pad1; };
+struct Ray { 
+
+	vec3 pos;
+	float pad0; 
+
+	vec3 dir;
+	float pad1;
+};
+
+struct RayPayload {
+
+	vec3 dir;				//Vector direction
+	uint loc1D;				//1D location in buffer
+
+	vec3 color;				//Color this ray contributes
+	float maxDist;			//Maximum hit distance along the ray's axis
+};
 
 struct Triangle {
 
@@ -26,7 +45,6 @@ struct Cube {
 
 	vec3 end;
 	uint material;
-
 };
 
 

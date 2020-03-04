@@ -60,7 +60,15 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//Data required for raygen
 	struct GPUData {
-		Vec4f32 eye, p0, p1, p2;
+
+		Vec3f32 eye;
+		u32 width;
+			
+		Vec3f32 p0;
+		u32 height;
+		
+		Vec4f32 p1, p2;
+
 		Vec3f32 skyboxColor; f32 exposure;
 	};
 
@@ -144,7 +152,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//GPU data
 	PipelineLayout pipelineLayout {
-		RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D_ARRAY, 0, ShaderAccess::COMPUTE, true),
+		RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, true),
 		RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
 		RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 		RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
@@ -156,7 +164,7 @@ struct RaytracingInterface : public ViewportInterface {
 		RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
 		RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 		RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
-		RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube)),
+		RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube))
 	};
 
 	//Create resources
@@ -474,16 +482,13 @@ struct RaytracingInterface : public ViewportInterface {
 
 		const f32 aspect = res.cast<Vec2f32>().aspect();
 
-		Vec4f32 eye4 = (-eye).cast<Vec4f32>();
-		eye4.w = 1;
-
 		const Vec4f32 p0 = v * Vec4f32(-aspect, 1, -1, 1);
 		const Vec4f32 p1 = v * Vec4f32(aspect, 1, -1, 1);
 		const Vec4f32 p2 = v * Vec4f32(-aspect, -1, -1, 1);
 
 		GPUData buffer {
-			eye4,
-			p0,
+			-eye, res.x,
+			p0.cast<Vec3f32>(), res.y,
 			p1,
 			p2,
 			{ 0, 0.5, 1 },
@@ -508,7 +513,7 @@ struct RaytracingInterface : public ViewportInterface {
 			Texture::Info(
 				size.cast<Vec2u16>(), 
 				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE, 
-				1, maxShadowRaysPerPixel
+				1, 1
 			)
 		};
 
@@ -539,7 +544,7 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
-		raytracingDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D_ARRAY });
+		raytracingDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D });
 		raytracingDescriptors->updateDescriptor(6, { shadowRayData, 0 });
 		raytracingDescriptors->updateDescriptor(10, { positionBuffer, 0 });
 		raytracingDescriptors->updateDescriptor(11, { reflectionRayData, 0 });
@@ -557,7 +562,6 @@ struct RaytracingInterface : public ViewportInterface {
 		cl->add(
 
 			ClearBuffer(counterBuffer),
-			ClearImage(raytracingOutput, 0, 1, maxShadowRaysPerPixel),
 
 			//Dispatch rays
 

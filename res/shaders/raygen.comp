@@ -8,10 +8,10 @@
 layout(binding=0, std140) uniform GPUData {
 
 	vec3 eye;
-	float pad0;
+	uint width;
 
 	vec3 p0;
-	float pad1;
+	uint height;
 
 	vec3 p1;
 	float pad2;
@@ -23,7 +23,7 @@ layout(binding=0, std140) uniform GPUData {
 	float exposure;
 };
 
-layout(binding=0, outputFormat) writeonly uniform image2DArray rayOutput;
+layout(binding=0, outputFormat) writeonly uniform image2D rayOutput;
 
 layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
 
@@ -44,8 +44,10 @@ layout(binding=7, std140) readonly buffer Lights {
 	Light lights[];
 };
 
+struct Position { vec3 pos; uint shadowStart; };
+
 layout(binding=8, std140) writeonly buffer PositionBuffer {
-	vec3 positions[];
+	Position positions[];
 };
 
 layout(binding=9, std140) writeonly buffer ReflectionRays {
@@ -57,23 +59,16 @@ layout(binding=9, std140) writeonly buffer ReflectionRays {
 //Per light shading
 
 vec3 shadeLight(
-
 	const vec3 F0,
 	const Material m,
 	const Light light, 
-
 	const vec3 pos,
 	const vec3 n,
 	const vec3 v,
-	const uvec2 screenPos,
-	
-	#if defined(AVOID_CONFLICTS)
-		inout uint id,
-	#endif
-
-	const uint maxLayers,
 	const float ao,
-	const float NdotV
+	const float NdotV,
+	const uint loc1D,
+	const uint shadowId
 ) {
 
 	vec3 l = light.dir;
@@ -84,7 +79,7 @@ vec3 shadeLight(
 
 		l = pos - light.pos;
 		const float dst = length(l);
-		invSquareDist = max(1 - dst / light.rad, 0);		//TODO: This should be dst^2
+		invSquareDist = max(1 - dst / light.rad, 0);		//TODO: This should be dst^2 (dot(l, l))
 
 		//Calculate params for point light shadows
 
@@ -105,77 +100,50 @@ vec3 shadeLight(
 	//Only shoot shadows for materials that allow it 
 
 	#ifndef DISABLE_SHADOWS
-		if((m.materialInfo & MaterialInfo_NoCastShadows) == 0) {
+
+		//Shoot shadow ray and assume unshadowed if out of bounds
+
+		if(shadowId >= shadowRays.length())
+			return color;
+
+		shadowRays[shadowId] = RayPayload(
+			-l,
+			loc1D,
+			color,
+			maxDist
+		);
 		
-			#ifdef AVOID_CONFLICTS
+		return vec3(0, 0, 0);
 
-				if(id >= maxLayers)
-					return color;
-
-			#endif
-
-			const uint shadowId = atomicAdd(shadowCounter, 1);
-
-			//If out of bounds, assume unshadowed
-
-			if(shadowId >= shadowRays.length())
-				return color;
-
-			//Shoot shadow ray
-
-			#if defined(AVOID_CONFLICTS)
-
-				shadowRays[shadowId] = RayPayload(
-					-l,
-					screenPos.x << 16 | screenPos.y,
-					uvec2(packHalf2x16(color.xy), packHalf2x16(vec2(0, color.z)) | id),
-					maxDist
-				);
-
-				++id;
-
-			#else
-
-				shadowRays[shadowId] = RayPayload(
-					-l,
-					screenPos.x << 16 | screenPos.y,
-					uvec2(packHalf2x16(color.xy), packHalf2x16(vec2(0, color.z))),
-					maxDist
-				);
-
-			#endif
-		
-			return vec3(0, 0, 0);
-		}
+	#else
+		return color;
 	#endif
-
-	//By default don't do shadows
-
-	return color;
 }
 
 //Trace reflection ray
 
-vec3 traceReflection(const vec3 n, const vec3 v, const uvec2 screenPos, const uint width, const float NdotV, const vec3 kS) {
+vec3 traceReflection(const vec3 n, const vec3 v, const float NdotV, const vec3 kS, const uint loc1D) {
 
 	#ifndef DISABLE_REFLECTIONS
-		if(any(greaterThanEqual(kS, vec3(0, 0, 0)))) {
+
+		if(kS.x > 0 && kS.y > 0 && kS.z > 0) {
 
 			uint reflectionId = atomicAdd(reflrectionCounter, 1);
 
 			reflectionRays[reflectionId] = RayPayload(
 				reflect(v, n),
-				screenPos.x << 16 | screenPos.y,
-				uvec2(packHalf2x16(kS.xy), packHalf2x16(vec2(0, kS.z))),
+				loc1D,
+				kS,
 				noHit
 			);
 
 			return vec3(0, 0, 0);
 		}
-		else return vec3(0, 0, 0);
-	#endif
 
-	return kS * skyboxColor;
+		return vec3(0, 0, 0);
+	#else
+		return kS * skyboxColor;
+	#endif
 }
 
 //Per pixel shading
@@ -186,9 +154,7 @@ vec3 shade(
 	const vec3 n, 
 	const vec3 v,
 	const float NdotV,
-	const uvec2 screenPos,
-	const uint maxLayers,
-	const uint width
+	const uint loc1D
 ) {
 	const float ao = 1;				//TODO:
 
@@ -198,54 +164,43 @@ vec3 shade(
 	const vec3 kD = (1 - kS) * (1 - m.metallic);
 
 	vec3 lighting = vec3(0, 0, 0);
+
+	uint shadowAtomicStart = 0;
 	
-	#if defined(AVOID_CONFLICTS)
-		uint id = 0;
+	#ifndef DISABLE_SHADOWS
+		shadowAtomicStart = atomicAdd(shadowCounter, lights.length());
 	#endif
+	
+	positions[loc1D] = Position(pos + n * epsilon, shadowAtomicStart);
 
 	//TODO: Perfect mirrors don't need shadow rays
 
-	for(uint i = 0; i < lights.length(); ++i) {
-	
-		#if defined(AVOID_CONFLICTS)
-			lighting += shadeLight(F0, m, lights[i], pos, n, v, screenPos, id, maxLayers, ao, NdotV);
-		#else
-			lighting += shadeLight(F0, m, lights[i], pos, n, v, screenPos, maxLayers, ao, NdotV);
-		#endif
-	}
+	for(uint i = 0; i < lights.length(); ++i)
+		lighting += shadeLight(F0, m, lights[i], pos, n, v, ao, NdotV, loc1D, shadowAtomicStart + i);
 
-	vec3 reflection = traceReflection(n, v, screenPos, width, NdotV, kS);
+	vec3 reflection = traceReflection(n, v, NdotV, kS, loc1D);
 
 	return (m.ambient + kD / pi) * ao * m.albedo + reflection + lighting + m.emissive;
 }
 
 //Handling intersection
 
-vec3 onMiss(const Ray r) {
-	return skyboxColor;
-}
+vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material, const uint loc1D) {
 
-vec3 onHit(const vec3 pos, const vec3 hit, const vec3 normal, const vec3 v, const float NdotV, const uint material, const uvec2 screenPos, const uint width, const uint maxLayers) {
-	return shade(materials[material], pos, normal, v, NdotV, screenPos, width, maxLayers);
-}
-
-//Calculating intersection
-
-vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material, const uvec2 screenPos, inout vec3 outPos, const uint width, const uint maxLayers) {
-
-	if(hit.z == noHit)
-		return onMiss(r);
+	if(hit.z == noHit) {
+		positions[loc1D] = Position(vec3(0), noRayHit);
+		return skyboxColor;
+	}
 
 	const vec3 position = r.pos + r.dir * hit.z;
-	outPos = position + normal * epsilon;
 	
 	const vec3 v = normalize(position - eye);
 	const float NdotV = max(dot(-normal, v), 0);
 
-	return onHit(position, hit, normal, v, NdotV, material, screenPos, width, maxLayers);
+	return shade(materials[material], position, normal, v, NdotV, loc1D);
 }
 
-vec3 trace(const Ray ray, const uvec2 screenPos, inout vec3 position, const uint width, const uint maxLayers) {
+vec3 trace(const Ray ray, const uint loc1D) {
 
 	//TODO: Perhaps do an intersect per tile (4 planes)
 	//		then intersect that geometry; not all spheres
@@ -256,9 +211,7 @@ vec3 trace(const Ray ray, const uvec2 screenPos, inout vec3 position, const uint
 
 	traceGeometry(ray, hit, normal, material);
 
-	//TODO: Only get normal of one object
-
-	return doIntersect(ray, hit, normal, material, screenPos, position, width, maxLayers);
+	return doIntersect(ray, hit, normal, material, loc1D);
 }
 
 //
@@ -267,31 +220,26 @@ void main() {
 
 	//Get ray position
 	
-	const uvec3 size = uvec3(imageSize(rayOutput));
 	const uvec2 loc = gl_GlobalInvocationID.xy;
 
-	if(loc.x >= size.x || loc.y >= size.y) return;
+	if(loc.x >= width || loc.y >= height) return;
 
 	//Shoot ray
 
 	const vec3 right = p1 - p0;
 	const vec3 up = p2 - p0;
 	
-	const vec2 uv = (vec2(loc) + 0.5) / vec2(size.xy);
+	const vec2 uv = (vec2(loc) + 0.5) / vec2(width, height);
 	const vec3 rayPos = p0 + uv.x * right + uv.y * up;
 
 	const Ray ray = Ray(
 		rayPos, 0,
 		normalize(rayPos - eye), 0
 	);
-
-	vec3 pos;
-	const vec3 color = trace(ray, loc, pos, size.x, size.z);
+	
+	const uint loc1D = loc.x + loc.y * width;
+	const vec3 color = trace(ray, loc1D);
 
 	//Store
-
-	const uint loc1D = loc.x + loc.y * size.x;
-	positions[loc1D] = pos;
-
-	imageStore(rayOutput, ivec3(loc, 0), vec4(color, 0));
+	imageStore(rayOutput, ivec2(loc), vec4(color, 0));
 }

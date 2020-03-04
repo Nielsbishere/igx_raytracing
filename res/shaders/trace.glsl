@@ -16,18 +16,9 @@ layout(binding=10, std140) readonly buffer Cubes {
 	Cube cubes[];
 };
 
-struct RayPayload {
-
-	vec3 dir;				//Vector direction in spherical coords
-	uint screenCoord;
-
-	uvec2 color;			//Color packed into 2 halfs, alpha used for layer
-	float maxDist;
-
-};
-
 void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint material) {
 
+	//TODO: Only get normal of one object
 	//TODO: Spheres and tris are upside down
 
 	#ifdef ALLOW_SPHERES
@@ -110,10 +101,8 @@ bool traceOcclusion(const Ray ray, const float maxDist) {
 
 	#ifdef ALLOW_CUBES
 
-	//TODO: Crashes NVIDIA!
-
-	//for(int i = 0; i < cubes.length(); ++i)
-	//	rayIntersectCube(ray, cubes[i], hit);
+	for(int i = 0; i < cubes.length(); ++i)
+		rayIntersectCube(ray, cubes[i], hit);
 
 	#endif
 

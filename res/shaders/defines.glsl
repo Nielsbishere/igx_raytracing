@@ -15,8 +15,6 @@
 #define THREADS_X 8
 #define THREADS_Y 8
 
-#define AVOID_CONFLICTS
-
 #ifdef FULL_PRECISION
 	#define outputFormat rgba32f
 #else
