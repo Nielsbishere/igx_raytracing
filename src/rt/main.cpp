@@ -1,5 +1,5 @@
 #include "graphics/command/commands.hpp"
-#include "helpers/graphics_object_ref.hpp"
+#include "helpers/common.hpp"
 #include "graphics/enums.hpp"
 #include "graphics/graphics.hpp"
 #include "system/viewport_manager.hpp"
@@ -26,18 +26,20 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//Resources
 
-	Swapchain swapchain;
-	CommandList cl;
-	PrimitiveBuffer mesh;
-	Descriptors raytracingDescriptors;
-	Pipeline raygenPipeline, dispatchSetup, shadowPipeline, postProcessing, reflectionPipeline;
-	Texture raytracingOutput, tex2D;
-	Sampler samp;
+	SwapchainRef swapchain;
+	CommandListRef cl;
+	PrimitiveBufferRef mesh;
+	DescriptorsRef raytracingDescriptors;
+	PipelineRef raygenPipeline, dispatchSetup, shadowPipeline, postProcessing, reflectionPipeline;
+	TextureRef raytracingOutput, tex2D;
+	SamplerRef samp;
 
-	ShaderBuffer 
+	ShaderBufferRef 
 		raygenData, sphereData, planeData, triangleData, lightData,
 		materialData, shadowRayData, counterBuffer, dispatchArgs, positionBuffer,
 		reflectionRayData, cubeData;
+
+	UploadBufferRef uploadBuffer;
 
 	Vec2u32 res;
 	Vec3f32 eye{ 0, 0, 7 }, eyeDir = { 0, 0, -1 };
@@ -50,7 +52,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 	u8 pipelineUpdates{};
 
-	const String pipelines[5] = {
+	String pipelines[5] = {
 		"./shaders/raygen.comp.spv",
 		"./shaders/dispatch_setup.comp.spv",
 		"./shaders/shadow.comp.spv",
@@ -151,32 +153,48 @@ struct RaytracingInterface : public ViewportInterface {
 		avgShadowRaysPerPixel = 3;		//Expect 3 shadow rays per pixel avg
 
 	//GPU data
-	PipelineLayout pipelineLayout {
-		RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, true),
-		RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
-		RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-		RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-		RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
-		RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
-		RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
-		RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
-		RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(Vec4u32)),
-		RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
-		RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-		RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
-		RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube))
-	};
+	PipelineLayoutRef pipelineLayout;
 
 	//Create resources
 
 	RaytracingInterface(Graphics& g) : g(g) {
 
-		//Shader reloading
+		//Pipeline layout
+
+		pipelineLayout = {
+
+			g, NAME("Raytracing pipeline layout"),
+
+			PipelineLayout::Info(
+				RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true),
+				RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
+				RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+				RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+				RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
+				RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
+				RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
+				RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
+				RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(Vec4u32)),
+				RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
+				RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+				RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
+				RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube))
+			)
+		};
+
+		//Upload buffer
+
+		uploadBuffer = {
+			g, NAME("Upload buffer"),
+			UploadBuffer::Info(1_MiB, 1_MiB, 4_MiB)
+		};
+
+		/* TODO: Shader reloading
 
 		#ifndef NDEBUG
 
 		oic::System::files()->addFileChangeCallback(
-			[](FileSystem *, const FileInfo inf, FileChange cng, void *intr) -> void {
+			[](FileSystem *, const FileInfo &inf, FileChange cng, void *intr) -> void {
 		
 				if (cng == FileChange::UPDATE) {
 
@@ -204,6 +222,8 @@ struct RaytracingInterface : public ViewportInterface {
 		);
 
 		#endif
+
+		*/
 
 		//Create primitive buffer
 
@@ -263,7 +283,7 @@ struct RaytracingInterface : public ViewportInterface {
 			{ 1, 0 }, { 0, 0 }
 		};
 
-		const List<u8> iboBuffer{
+		const List<u16> iboBuffer{
 			0,3,2, 2,1,0,			//Bottom
 			4,5,6, 6,7,4,			//Top
 			8,11,10, 10,9,8,		//Back
@@ -279,7 +299,7 @@ struct RaytracingInterface : public ViewportInterface {
 					BufferLayout(positions, attrib[0]),
 					BufferLayout(uvBuffer, attrib[1])
 				},
-				BufferLayout(iboBuffer, { 0, GPUFormat::R8u })
+				BufferLayout(iboBuffer, { 0, GPUFormat::R16u })
 			)
 		};
 
@@ -288,8 +308,8 @@ struct RaytracingInterface : public ViewportInterface {
 		raygenData = {
 			g, NAME("Raygen uniform buffer"),
 			ShaderBuffer::Info(
-				GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE,
-				{ { NAME("mask"), ShaderBufferLayout(0, Buffer(sizeof(GPUData))) } }
+				GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_ACCESS,
+				{ { NAME("mask"), ShaderBuffer::Layout(0, Buffer(sizeof(GPUData))) } }
 			)
 		};
 
@@ -298,8 +318,8 @@ struct RaytracingInterface : public ViewportInterface {
 		sphereData = {
 			g, NAME("Sphere data"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::CPU_WRITE,
-				{ { NAME("spheres"), ShaderBufferLayout(0, sphereCount * sizeof(Vec4f32)) } }
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::CPU_ACCESS,
+				{ { NAME("spheres"), ShaderBuffer::Layout(0, sphereCount * sizeof(Vec4f32)) } }
 			)
 		};
 
@@ -311,7 +331,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Plane data"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("planes"), ShaderBufferLayout(0, Buffer((u8*)planes, (u8*)planes + sizeof(planes))) } }
+				{ { NAME("planes"), ShaderBuffer::Layout(0, Buffer((u8*)planes, (u8*)planes + sizeof(planes))) } }
 			)
 		};
 
@@ -323,7 +343,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Cube data"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("cubes"), ShaderBufferLayout(0, Buffer((u8*)cubes, (u8*)cubes + sizeof(cubes))) } }
+				{ { NAME("cubes"), ShaderBuffer::Layout(0, Buffer((u8*)cubes, (u8*)cubes + sizeof(cubes))) } }
 			)
 		};
 
@@ -337,7 +357,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Triangle data"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("triangles"), ShaderBufferLayout(0, Buffer((u8*)triangles, (u8*)triangles + sizeof(triangles))) } }
+				{ { NAME("triangles"), ShaderBuffer::Layout(0, Buffer((u8*)triangles, (u8*)triangles + sizeof(triangles))) } }
 			)
 		};
 
@@ -355,7 +375,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Material data"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("materials"), ShaderBufferLayout(0, Buffer((u8*)materials, (u8*)materials + sizeof(materials))) } }
+				{ { NAME("materials"), ShaderBuffer::Layout(0, Buffer((u8*)materials, (u8*)materials + sizeof(materials))) } }
 			)
 		};
 
@@ -369,7 +389,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Lights"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("lights"), ShaderBufferLayout(0, Buffer((u8*)lights, (u8*)lights + sizeof(lights))) } }
+				{ { NAME("lights"), ShaderBuffer::Layout(0, Buffer((u8*)lights, (u8*)lights + sizeof(lights))) } }
 			)
 		};
 
@@ -377,7 +397,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Counter buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("counterBuffer"), ShaderBufferLayout(0, sizeof(CounterBuffer)) } }
+				{ { NAME("counterBuffer"), ShaderBuffer::Layout(0, sizeof(CounterBuffer)) } }
 			)
 		};
 
@@ -385,7 +405,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Dispatch args"),
 			ShaderBuffer::Info(
 				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("dispatchArgs"), ShaderBufferLayout(0, sizeof(Vec4u32) * 2) } }
+				{ { NAME("dispatchArgs"), ShaderBuffer::Layout(0, sizeof(Vec4u32) * 2) } }
 			)
 		};
 
@@ -444,7 +464,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		//Prepare shaders
 
-		makePipelines(0xFF);
+		makePipelines(0xFF, true);
 
 		//Release the graphics instance for us until we need it again
 
@@ -463,6 +483,8 @@ struct RaytracingInterface : public ViewportInterface {
 			oic::System::log()->fatal("Currently only supporting 1 viewport");
 
 		//Create window swapchain
+
+		g.resume();		//This thread can now interact with graphics
 
 		swapchain = {
 			g, NAME("Swapchain"),
@@ -496,7 +518,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		memcpy(raygenData->getBuffer(), &buffer, sizeof(buffer));
-		raygenData->flush({ { 0, sizeof(buffer) } });
+		raygenData->flush(0, sizeof(buffer));
 	}
 
 	//Update size of surfaces
@@ -522,7 +544,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Shadow ray buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("shadowRays"), ShaderBufferLayout(0, sizeof(RayPayload) * avgShadowRaysPerPixel * size.prod()) } }
+				{ { NAME("shadowRays"), ShaderBuffer::Layout(0, sizeof(RayPayload) * avgShadowRaysPerPixel * size.prod()) } }
 			)
 		};
 
@@ -531,7 +553,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Reflection ray buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("reflectionRays"), ShaderBufferLayout(0, sizeof(RayPayload) * size.prod()) } }
+				{ { NAME("reflectionRays"), ShaderBuffer::Layout(0, sizeof(RayPayload) * size.prod()) } }
 			)
 		};
 
@@ -540,7 +562,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Position buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("positionBuffer"), ShaderBufferLayout(0, sizeof(Vec4f32) * size.prod()) } }
+				{ { NAME("positionBuffer"), ShaderBuffer::Layout(0, sizeof(Vec4f32) * size.prod()) } }
 			)
 		};
 
@@ -560,6 +582,18 @@ struct RaytracingInterface : public ViewportInterface {
 		cl->clear();
 
 		cl->add(
+
+			//Prepare data
+
+			FlushBuffer(raygenData, uploadBuffer),
+			FlushBuffer(lightData, uploadBuffer),
+			FlushBuffer(materialData, uploadBuffer),
+			FlushBuffer(triangleData, uploadBuffer),
+			FlushBuffer(cubeData, uploadBuffer),
+			FlushBuffer(planeData, uploadBuffer),
+			FlushBuffer(sphereData, uploadBuffer),
+			FlushBuffer(mesh, uploadBuffer),
+			FlushImage(tex2D, uploadBuffer),
 
 			ClearBuffer(counterBuffer),
 
@@ -591,7 +625,10 @@ struct RaytracingInterface : public ViewportInterface {
 		);
 	}
 
-	void makePipelines(u8 modified) {
+	void makePipelines(u8 modified, bool fromExe) {
+
+		for (auto &pipeline : pipelines)
+			pipeline[0] = fromExe ? '~' : '.';
 
 		if (modified & 1) {
 
@@ -602,7 +639,7 @@ struct RaytracingInterface : public ViewportInterface {
 			raygenPipeline = {
 				g, NAME("Raygen pipeline"),
 				Pipeline::Info(
-					PipelineFlag::OPTIMIZE,
+					Pipeline::Flag::NONE,
 					raygenComp,
 					pipelineLayout,
 					Vec3u32{ THREADS_X, THREADS_Y, 1 }
@@ -619,7 +656,7 @@ struct RaytracingInterface : public ViewportInterface {
 			dispatchSetup = {
 				g, NAME("Dispatch pipeline"),
 				Pipeline::Info(
-					PipelineFlag::OPTIMIZE,
+					Pipeline::Flag::NONE,
 					dispatch,
 					pipelineLayout,
 					Vec3u32{ 1, 1, 1 }
@@ -636,7 +673,7 @@ struct RaytracingInterface : public ViewportInterface {
 			shadowPipeline = {
 				g, NAME("Shadow pipeline"),
 				Pipeline::Info(
-					PipelineFlag::OPTIMIZE,
+					Pipeline::Flag::NONE,
 					shadow,
 					pipelineLayout,
 					Vec3u32{ THREADS, 1, 1 }
@@ -653,7 +690,7 @@ struct RaytracingInterface : public ViewportInterface {
 			postProcessing = {
 				g, NAME("Post processing pipeline"),
 				Pipeline::Info(
-					PipelineFlag::OPTIMIZE,
+					Pipeline::Flag::NONE,
 					postProcess,
 					pipelineLayout,
 					Vec3u32{ 8, 8, 1 }
@@ -670,7 +707,7 @@ struct RaytracingInterface : public ViewportInterface {
 			reflectionPipeline = {
 				g, NAME("Reflection pipeline"),
 				Pipeline::Info(
-					PipelineFlag::OPTIMIZE,
+					Pipeline::Flag::NONE,
 					reflectionShader,
 					pipelineLayout,
 					Vec3u32{ THREADS, 1, 1 }
@@ -685,7 +722,7 @@ struct RaytracingInterface : public ViewportInterface {
 	//Execute commandList
 
 	void render(const ViewportInfo*) final override {
-		g.present(raytracingOutput, 0, swapchain, cl);
+		g.present(raytracingOutput, 0, 0, swapchain, cl);
 	}
 
 	f64 time = 0;
@@ -704,7 +741,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		std::memcpy(sphereData->getBuffer(), spheres, sizeof(spheres));
-		sphereData->flush({ { 0, sizeof(spheres) } });
+		sphereData->flush(0, sizeof(spheres));
 
 		//TODO: Check artifacts at top of the screen
 
@@ -788,14 +825,14 @@ struct RaytracingInterface : public ViewportInterface {
 
 int main() {
 
-	Graphics g;
+	Graphics g("Igx raytracing test", 1, "Igx", 1);
 	RaytracingInterface viewportInterface(g);
 
 	g.pause();
 
 	System::viewportManager()->create(
 		ViewportInfo(
-			"Raytracer", {}, {}, 0, &viewportInterface, ViewportInfo::HANDLE_INPUT
+			g.appName, {}, {}, 0, &viewportInterface, ViewportInfo::HANDLE_INPUT
 		)
 	);
 

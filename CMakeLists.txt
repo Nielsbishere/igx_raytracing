@@ -14,6 +14,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 file(GLOB_RECURSE hpp "include/*.hpp")
 file(GLOB_RECURSE cpp "src/*.cpp")
 
+set(enableIgxTest FALSE FORCE CACHE BOOL "Enable IGX test")
 add_subdirectory(igx)
 
 # Setup test data
@@ -34,7 +35,7 @@ add_executable(
 	CMakeLists.txt
 )
 
-set_property(TARGET rtigx PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/res")
+set_property(TARGET rtigx PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res")
 
 target_include_directories(rtigx PRIVATE include)
 target_include_directories(rtigx PRIVATE igx/include)
@@ -48,7 +49,19 @@ source_group("Shaders" FILES ${shaders})
 source_group("Shader includes" FILES ${shaderIncludes})
 source_group("Shader binaries" FILES ${shaderBinaries})
 
-add_custom_command(TARGET rtigx POST_BUILD COMMAND compile ${shaders} WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/res/shaders")
+add_custom_command(TARGET rtigx POST_BUILD COMMAND compile ${shaders} WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res/shaders")
+
+add_virtual_files(
+	DIRECTORY
+		${CMAKE_CURRENT_SOURCE_DIR}/res/shaders
+	NAME
+		shaders
+	FILES
+		${shaderBinaries}
+)
+
+configure_icon(rtigx "${CMAKE_CURRENT_SOURCE_DIR}/igx/res/icon.ico")
+configure_virtual_files(rtigx)
 
 if(MSVC)
     target_compile_options(rtigx PRIVATE /W4 /WX /MD /MP /wd26812 /wd4201 /EHsc /GR)
