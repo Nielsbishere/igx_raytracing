@@ -1,28 +1,12 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "defines.glsl"
+#include "trace.glsl"
 #include "light.glsl"
-#include "primitive.glsl"
 
 layout(binding=0, outputFormat) uniform image2D rayOutput;
-
-layout(binding=0, std140) uniform GPUData {
-
-	vec3 eye;
-	uint width;
-
-	vec3 p0;
-	uint height;
-
-	vec3 p1;
-	float pad2;
-
-	vec3 p2;
-	float pad3;
-
-	vec3 skyboxColor;
-	float exposure;
-};
+layout(binding=1, rgba32f) uniform image2D accumulationBuffer;
+layout(binding=2, outputFormat) uniform image2D reflectionOutput;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -57,7 +41,8 @@ void main() {
 
 	//Store
 
-	vec3 color = imageLoad(rayOutput, loc).rgb;
+	vec3 diffuse = imageLoad(rayOutput, loc).rgb;
+	diffuse += imageLoad(reflectionOutput, loc).rgb;
 
 	const uint loc1D = loc.x + loc.y * width;
 	const uint shadowStart = positions[loc1D].shadowStart;
@@ -65,10 +50,23 @@ void main() {
 	if(shadowStart != noRayHit)
 		for(uint i = 0; i < lights.length(); ++i) {
 			const RayPayload shadowRay = shadowRays[shadowStart + i];
-			color += shadowRay.color * float(shadowRay.loc1D == 0);
+			diffuse += shadowRay.color * float(shadowRay.loc1D == 0);
 		}
 
+	//Increment accumulationBuffer
+
+	vec4 accum = sampleCount == 1 ? vec4(0) : imageLoad(accumulationBuffer, loc);
+
+	accum += vec4(diffuse, 0);
+
+	imageStore(accumulationBuffer, loc, accum);
+
+	vec3 color = accum.rgb / sampleCount;
+
 	//Exposure mapping
+
+	//if(any(isnan(color)))				//TODO: Why is diffuse NaN? invalid data in rayOutput or shadowRays?
+	//	color = vec3(0, 0, 0);
 
 	color = vec3(1, 1, 1) - exp(-color * exposure);
 

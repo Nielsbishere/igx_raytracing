@@ -5,25 +5,7 @@
 #include "material.glsl"
 #include "light.glsl"
 
-layout(binding=0, outputFormat) uniform image2D rayOutput;
-
-layout(binding=0, std140) uniform GPUData {
-
-	vec3 eye;
-	uint width;
-
-	vec3 p0;
-	uint height;
-
-	vec3 p1;
-	float pad2;
-
-	vec3 p2;
-	float pad3;
-
-	vec3 skyboxColor;
-	float exposure;
-};
+layout(binding=2, outputFormat) uniform image2D reflectionOutput;
 
 layout(local_size_x = THREADS, local_size_y = 1, local_size_z = 1) in;
 
@@ -178,8 +160,11 @@ void main() {
 	);
 
 	ivec2 loc = ivec2(loc1D % width, loc1D / width);
-	vec3 col = imageLoad(rayOutput, loc).xyz;
-	col += payload.color * trace(ray);
 
-	imageStore(rayOutput, loc, vec4(col, 0));
+	vec3 col = payload.color * trace(ray);
+
+	if(any(isnan(col)))
+		col = vec3(1000, 0, 0);
+
+	imageStore(reflectionOutput, loc, vec4(col, 0));
 }

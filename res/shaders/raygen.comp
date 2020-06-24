@@ -5,24 +5,6 @@
 #include "material.glsl"
 #include "light.glsl"
 
-layout(binding=0, std140) uniform GPUData {
-
-	vec3 eye;
-	uint width;
-
-	vec3 p0;
-	uint height;
-
-	vec3 p1;
-	float pad2;
-
-	vec3 p2;
-	float pad3;
-
-	vec3 skyboxColor;
-	float exposure;
-};
-
 layout(binding=0, outputFormat) writeonly uniform image2D rayOutput;
 
 layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
@@ -179,8 +161,9 @@ vec3 shade(
 		lighting += shadeLight(F0, m, lights[i], pos, n, v, ao, NdotV, loc1D, shadowAtomicStart + i);
 
 	vec3 reflection = traceReflection(n, v, NdotV, kS, loc1D);
-
-	return (m.ambient + kD / pi) * ao * m.albedo + reflection + lighting + m.emissive;
+	
+	vec3 color = (m.ambient + kD / pi) * ao * m.albedo + reflection + lighting + m.emissive;
+	return color;
 }
 
 //Handling intersection
@@ -196,8 +179,9 @@ vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint mate
 	
 	const vec3 v = normalize(position - eye);
 	const float NdotV = max(dot(-normal, v), 0);
-
-	return shade(materials[material], position, normal, v, NdotV, loc1D);
+	
+	vec3 color = shade(materials[material], position, normal, v, NdotV, loc1D);
+	return color;
 }
 
 vec3 trace(const Ray ray, const uint loc1D) {
@@ -214,32 +198,75 @@ vec3 trace(const Ray ray, const uint loc1D) {
 	return doIntersect(ray, hit, normal, material, loc1D);
 }
 
+float rand1(vec2 co){
+    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+}
+
+vec2 rand(vec2 p) {
+	return vec2(rand1(p), rand1(p * 29330 + 1020));
+}
+
 //
+
+//#define USE_DOF
 
 void main() {
 
-	//Get ray position
+	//Check if out of bounds
 	
 	const uvec2 loc = gl_GlobalInvocationID.xy;
 
-	if(loc.x >= width || loc.y >= height) return;
+	if(loc.x >= width || loc.y >= height)
+		return;
 
-	//Shoot ray
+	//Calculate center pixel
 
+	vec2 centerPixel = (vec2(loc) + 0.5) * invRes;
+	
 	const vec3 right = p1 - p0;
 	const vec3 up = p2 - p0;
-	
-	const vec2 uv = (vec2(loc) + 0.5) / vec2(width, height);
-	const vec3 rayPos = p0 + uv.x * right + uv.y * up;
+
+	//Get focal point
+		
+	vec2 randomOffset = (rand(centerPixel + vec2(randomX, randomY)) - 0.5) * invRes;
+
+	#ifdef USE_DOF
+
+		const vec3 centerPixelPos = p0 + centerPixel.x * right + centerPixel.y * up;
+
+		const vec3 dirToCenter = normalize(centerPixelPos - eye);
+
+		const vec3 focalPoint = eye + dirToCenter * focalDistance; 
+		
+		randomOffset *= aperature;
+		
+		const vec2 rayPosUv = centerPixel + randomOffset;
+		const vec3 rayPos = p0 + rayPosUv.x * right + rayPosUv.y * up;
+
+	#else 
+
+		centerPixel += randomOffset;
+		const vec3 centerPixelPos = p0 + centerPixel.x * right + centerPixel.y * up;
+
+		const vec3 dirToCenter = normalize(centerPixelPos - eye);
+		
+		const vec3 rayPos = eye;
+		const vec3 focalPoint = centerPixelPos;
+
+	#endif
+
+	//Setup ray
 
 	const Ray ray = Ray(
 		rayPos, 0,
-		normalize(rayPos - eye), 0
+		normalize(focalPoint - rayPos), 0
 	);
 	
 	const uint loc1D = loc.x + loc.y * width;
+
+	//Store color
+
 	const vec3 color = trace(ray, loc1D);
 
-	//Store
 	imageStore(rayOutput, ivec2(loc), vec4(color, 0));
 }

@@ -11,6 +11,7 @@
 #include "input/keyboard.hpp"
 #include "input/mouse.hpp"
 #include "utils/math.hpp"
+#include "utils/random.hpp"
 
 #define uint u32
 #include "../res/shaders/defines.glsl"
@@ -31,7 +32,7 @@ struct RaytracingInterface : public ViewportInterface {
 	PrimitiveBufferRef mesh;
 	DescriptorsRef raytracingDescriptors;
 	PipelineRef raygenPipeline, dispatchSetup, shadowPipeline, postProcessing, reflectionPipeline;
-	TextureRef raytracingOutput, tex2D;
+	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, tex2D;
 	SamplerRef samp;
 
 	ShaderBufferRef 
@@ -46,9 +47,16 @@ struct RaytracingInterface : public ViewportInterface {
 	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
 
 	f64 speed = 5, fovChangeSpeed = 7;
-	f32 fov = f32(70_deg);
+	f32 fov = 70;
+
+	u32 sampleCount{};
 
 	static constexpr usz sphereCount = 7;
+	static constexpr usz triCount = 3;
+	static constexpr usz cubeCount = 1;
+	static constexpr usz planeCount = 1;
+
+	oic::Random r;
 
 	u8 pipelineUpdates{};
 
@@ -69,9 +77,24 @@ struct RaytracingInterface : public ViewportInterface {
 		Vec3f32 p0;
 		u32 height;
 		
-		Vec4f32 p1, p2;
+		Vec3f32 p1;
+		f32 randomX;
+		
+		Vec3f32 p2;
+		f32 randomY;
 
 		Vec3f32 skyboxColor; f32 exposure;
+
+		Vec2f32 invRes;
+		f32 focalDistance;
+		f32 aperature;
+
+		u32 sampleCount;
+		u32 triCount;
+		u32 sphereCount;
+		u32 cubeCount;
+
+		u32 planeCount;
 	};
 
 	//A ray payload
@@ -178,7 +201,9 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
 				RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 				RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
-				RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube))
+				RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube)),
+				RegisterLayout(NAME("Accumulation buffer"), 13, TextureType::TEXTURE_2D, 1, ShaderAccess::COMPUTE, GPUFormat::RGBA32f, true),
+				RegisterLayout(NAME("Reflection buffer"), 14, TextureType::TEXTURE_2D, 2, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true)
 			)
 		};
 
@@ -503,18 +528,33 @@ struct RaytracingInterface : public ViewportInterface {
 	void updateUniforms() {
 
 		const f32 aspect = res.cast<Vec2f32>().aspect();
+		const f32 nearPlane = f32(std::tan(fov * 0.5_deg));
 
-		const Vec4f32 p0 = v * Vec4f32(-aspect, 1, -1, 1);
-		const Vec4f32 p1 = v * Vec4f32(aspect, 1, -1, 1);
-		const Vec4f32 p2 = v * Vec4f32(-aspect, -1, -1, 1);
+		const Vec4f32 p0 = v * Vec4f32(-aspect, 1, -nearPlane, 1);
+		const Vec4f32 p1 = v * Vec4f32(aspect, 1, -nearPlane, 1);
+		const Vec4f32 p2 = v * Vec4f32(-aspect, -1, -nearPlane, 1);
 
 		GPUData buffer {
+
 			-eye, res.x,
+
 			p0.cast<Vec3f32>(), res.y,
-			p1,
-			p2,
-			{ 0, 0.5, 1 },
-			2
+			p1.cast<Vec3f32>(), r.range<f32>(-100, 100),
+			p2.cast<Vec3f32>(), r.range<f32>(-100, 100),
+
+			{ 0, 0.5, 1 }, 2,
+			
+			Vec2f32(1.f / res.x, 1.f / res.y),
+
+			4,
+			128,
+
+			++sampleCount,
+			triCount,
+			sphereCount,
+			cubeCount,
+
+			planeCount
 		};
 
 		memcpy(raygenData->getBuffer(), &buffer, sizeof(buffer));
@@ -526,12 +566,33 @@ struct RaytracingInterface : public ViewportInterface {
 	void resize(const ViewportInfo*, const Vec2u32& size) final override {
 
 		res = size;
+		sampleCount = 0;
 		
 		//Update compute target
 
 		raytracingOutput.release();
 		raytracingOutput = {
 			g, NAME("Raytracing output"),
+			Texture::Info(
+				size.cast<Vec2u16>(), 
+				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE, 
+				1, 1
+			)
+		};
+
+		raytracingAccumulation.release();
+		raytracingAccumulation = {
+			g, NAME("Raytracing accumulation"),
+			Texture::Info(
+				size.cast<Vec2u16>(), 
+				GPUFormat::RGBA32f, GPUMemoryUsage::GPU_WRITE, 
+				1, 1
+			)
+		};
+
+		reflectionBuffer.release();
+		reflectionBuffer = {
+			g, NAME("Reflection buffer"),
 			Texture::Info(
 				size.cast<Vec2u16>(), 
 				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE, 
@@ -570,11 +631,13 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->updateDescriptor(6, { shadowRayData, 0 });
 		raytracingDescriptors->updateDescriptor(10, { positionBuffer, 0 });
 		raytracingDescriptors->updateDescriptor(11, { reflectionRayData, 0 });
-		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 } });
-		
-		fillCommandList();
+		raytracingDescriptors->updateDescriptor(13, { raytracingAccumulation, TextureType::TEXTURE_2D });
+		raytracingDescriptors->updateDescriptor(14, { reflectionBuffer, TextureType::TEXTURE_2D });
+		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 }, { 13, 2 } });
 
 		swapchain->onResize(size);
+
+		fillCommandList();
 	}
 
 	void fillCommandList() {
@@ -748,7 +811,7 @@ struct RaytracingInterface : public ViewportInterface {
 		#ifndef NDEBUG
 
 		if (pipelineUpdates) {
-			makePipelines(pipelineUpdates);
+			makePipelines(pipelineUpdates, false);
 			pipelineUpdates = 0;
 		}
 
@@ -769,6 +832,9 @@ struct RaytracingInterface : public ViewportInterface {
 
 				if (dvc->isDown(Key::KEY_D)) d += Vec3f32(-1, 0, 0);
 				if (dvc->isDown(Key::KEY_A)) d += Vec3f32(1, 0, 0);
+
+				if (dvc->isDown(Key::KEY_1)) fov = f32(std::max(fov - fovChangeSpeed * dt, 0.99999999));
+				if (dvc->isDown(Key::KEY_2)) fov = f32(std::min(fov + fovChangeSpeed * dt, 149.99999999));
 
 				if (dvc->isDown(Key::KEY_SHIFT))
 					isShift = true;
@@ -795,6 +861,10 @@ struct RaytracingInterface : public ViewportInterface {
 			const f32 speedUp = isShift ? 10.f : 1.f;
 
 			d = d.clamp(-1, 1) * f32(dt * speed * speedUp);
+
+			if(d.any())
+				sampleCount = 0;
+
 			eye += (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
 
 			v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });

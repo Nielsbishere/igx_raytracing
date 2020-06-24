@@ -1,5 +1,35 @@
 #include "primitive.glsl"
 
+layout(binding=0, std140) uniform GPUData {
+
+	vec3 eye;
+	uint width;
+
+	vec3 p0;
+	uint height;
+
+	vec3 p1;
+	float randomX;
+
+	vec3 p2;
+	float randomY;
+
+	vec3 skyboxColor;
+	float exposure;
+
+	vec2 invRes;
+	float focalDistance;
+	float aperature;
+
+	uint sampleCount;
+	uint triangleCount;
+	uint sphereCount;
+	uint cubeCount;
+
+	uint planeCount;
+
+};
+
 layout(binding=0, std140) readonly buffer Spheres {
 	vec4 spheres[];		//pos, rad^2
 };
@@ -23,7 +53,7 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 
 	#ifdef ALLOW_SPHERES
 
-	for(int i = 0; i < spheres.length(); ++i) {
+	for(int i = 0; i < sphereCount; ++i) {
 
 		const vec4 sphere = spheres[i];
 
@@ -37,7 +67,7 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 
 	#ifdef ALLOW_PLANES
 
-	for(int i = 0; i < planes.length(); ++i) {
+	for(int i = 0; i < planeCount; ++i) {
 		if(rayIntersectPlane(ray, planes[i], hit)) {
 			material = i;
 			normal = normalize(planes[i].xyz);
@@ -50,7 +80,7 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 
 	//Flat shading for now TODO: Normals
 
-	for(int i = 0; i < triangles.length(); ++i) {
+	for(int i = 0; i < triangleCount; ++i) {
 		if(rayIntersectTri(ray, triangles[i], hit)) {
 			material = triangles[i].material;
 			normal = normalize(cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0));
@@ -63,7 +93,7 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 
 	//TODO: Normals
 
-	for(int i = 0; i < cubes.length(); ++i) {
+	for(int i = 0; i < cubeCount; ++i) {
 		if(rayIntersectCube(ray, cubes[i], hit)) {
 			material = cubes[i].material;
 			normal = normalize((cubes[i].end + cubes[i].start) * 0.5 - (hit.z * ray.dir + ray.pos));

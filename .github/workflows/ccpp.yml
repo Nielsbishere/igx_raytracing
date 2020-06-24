@@ -11,6 +11,6 @@ jobs:
       with:
         submodules: recursive
     - name: cmake build
-      run: cmake . -G "Visual Studio 16 2019"
+      run: cmake . -G "Visual Studio 16 2019" -DdoShaderRecreate=FALSE
     - name: build
       run: cmake --build . -j 8
