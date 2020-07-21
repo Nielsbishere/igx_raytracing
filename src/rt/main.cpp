@@ -12,6 +12,7 @@
 #include "input/mouse.hpp"
 #include "utils/math.hpp"
 #include "utils/random.hpp"
+#include "utils/inflect.hpp"
 
 #define uint u32
 #include "../res/shaders/defines.glsl"
@@ -20,6 +21,8 @@
 using namespace igx::ui;
 using namespace igx;
 using namespace oic;
+
+oicExposedEnum(LightType, u16, Directional, Point, Spot);
 
 struct RaytracingInterface : public ViewportInterface {
 
@@ -140,17 +143,46 @@ struct RaytracingInterface : public ViewportInterface {
 		u32 materialInfo;
 	};
 
-	//A light
+	/*/A light
+	struct Light {
+
+		Vec3f32 pos;
+		f16 rad, ori;
+
+		Vec4u16 rot;
+		Vec3u16 col;			//TODO: Vec3f16
+		LightType type;
+
+		InflectBody(
+			switch (type) {
+
+				case LightType::Directional:
+					inflector.inflect(this, recursion, { "Type", "Direction", "Color", "Angular extent (in degrees, sun is 0.53)" }, type, rot, col, ori);
+					break;
+
+				case LightType::Point:
+					inflector.inflect(this, recursion, { "Type", "Position", "Radius", "Origin", "Color" }, type, pos, rad, ori, col);
+					break;
+
+				case LightType::Spot:
+					inflector.inflect(this, recursion, { "Type", "Position", "Rotation", "Radius", "Origin", "Color" }, type, rot, pos, rad, ori, col);
+					break;
+
+			}
+		);
+
+	};*/
+
 	struct Light {
 
 		Vec3f32 pos;
 		f32 rad;
 
 		Vec3f32 dir;
-		u32 type;		//dir, point
+		u32 type;
 
 		Vec3f32 color;
-		f32 angle;		//Unused for now
+		f32 angle;
 
 	};
 
@@ -246,8 +278,6 @@ struct RaytracingInterface : public ViewportInterface {
 							rti->pipelineUpdates |= 1 << i;
 							break;
 						}
-
-						//TODO: If GLSL changed, recompile pls
 
 						++i;
 					}
@@ -503,10 +533,6 @@ struct RaytracingInterface : public ViewportInterface {
 		//Prepare shaders
 
 		makePipelines(0xFF, true);
-
-		//Release the graphics instance for us until we need it again
-
-		g.pause();
 	}
 
 	~RaytracingInterface() {
@@ -588,7 +614,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Raytracing output"),
 			Texture::Info(
 				size.cast<Vec2u16>(), 
-				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE, 
+				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE_ONLY, 
 				1, 1
 			)
 		};
@@ -598,7 +624,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Raytracing accumulation"),
 			Texture::Info(
 				size.cast<Vec2u16>(), 
-				GPUFormat::RGBA32f, GPUMemoryUsage::GPU_WRITE, 
+				GPUFormat::RGBA32f, GPUMemoryUsage::GPU_WRITE_ONLY, 
 				1, 1
 			)
 		};
@@ -608,7 +634,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Reflection buffer"),
 			Texture::Info(
 				size.cast<Vec2u16>(), 
-				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE, 
+				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE_ONLY, 
 				1, 1
 			)
 		};
@@ -617,7 +643,7 @@ struct RaytracingInterface : public ViewportInterface {
 		shadowRayData = {
 			g, NAME("Shadow ray buffer"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
 				{ { NAME("shadowRays"), ShaderBuffer::Layout(0, sizeof(ShadowPayload) * maxShadowRaysPerPixel * size.prod()) } }
 			)
 		};
@@ -626,7 +652,7 @@ struct RaytracingInterface : public ViewportInterface {
 		shadowColors = {
 			g, NAME("Shadow color buffer"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
 				{ { NAME("shadowColors"), ShaderBuffer::Layout(0, sizeof(Vec2u32) * maxShadowRaysPerPixel * size.prod()) } }
 			)
 		};
@@ -635,8 +661,8 @@ struct RaytracingInterface : public ViewportInterface {
 		shadowOutput = {
 			g, NAME("Shadow output buffer"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("shadowOutput"), ShaderBuffer::Layout(0, u64(std::ceil(maxShadowRaysPerPixel * size.prod() / 32.0)) * (32 / 8)) } }
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
+				{ { NAME("shadowOutput"), ShaderBuffer::Layout(0, u64(std::ceil(maxShadowRaysPerPixel * size.prod() / 32.0)) * 4) } }
 			)
 		};
 
@@ -644,7 +670,7 @@ struct RaytracingInterface : public ViewportInterface {
 		reflectionRayData = {
 			g, NAME("Reflection ray buffer"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
 				{ { NAME("reflectionRays"), ShaderBuffer::Layout(0, sizeof(RayPayload) * size.prod()) } }
 			)
 		};
@@ -653,7 +679,7 @@ struct RaytracingInterface : public ViewportInterface {
 		positionBuffer = {
 			g, NAME("Position buffer"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
 				{ { NAME("positionBuffer"), ShaderBuffer::Layout(0, sizeof(Vec4f32) * size.prod()) } }
 			)
 		};
@@ -857,28 +883,28 @@ struct RaytracingInterface : public ViewportInterface {
 		for (auto* dvc : vi->devices)
 			if (dvc->isType(InputDevice::KEYBOARD)) {
 
-				if (dvc->isDown(Key::KEY_W)) d += Vec3f32(0, 0, 1);
-				if (dvc->isDown(Key::KEY_S)) d += Vec3f32(0, 0, -1);
+				if (dvc->isDown(Key::Key_w)) d += Vec3f32(0, 0, 1);
+				if (dvc->isDown(Key::Key_s)) d += Vec3f32(0, 0, -1);
 
-				if (dvc->isDown(Key::KEY_Q)) d += Vec3f32(0, -1, 0);
-				if (dvc->isDown(Key::KEY_E)) d += Vec3f32(0, 1, 0);
+				if (dvc->isDown(Key::Key_q)) d += Vec3f32(0, -1, 0);
+				if (dvc->isDown(Key::Key_e)) d += Vec3f32(0, 1, 0);
 
-				if (dvc->isDown(Key::KEY_D)) d += Vec3f32(-1, 0, 0);
-				if (dvc->isDown(Key::KEY_A)) d += Vec3f32(1, 0, 0);
+				if (dvc->isDown(Key::Key_d)) d += Vec3f32(-1, 0, 0);
+				if (dvc->isDown(Key::Key_a)) d += Vec3f32(1, 0, 0);
 
-				if (dvc->isDown(Key::KEY_1)) fov = f32(std::max(fov - fovChangeSpeed * dt, 0.99999999));
-				if (dvc->isDown(Key::KEY_2)) fov = f32(std::min(fov + fovChangeSpeed * dt, 149.99999999));
+				if (dvc->isDown(Key::Key_1)) fov = f32(std::max(fov - fovChangeSpeed * dt, 0.99999999));
+				if (dvc->isDown(Key::Key_2)) fov = f32(std::min(fov + fovChangeSpeed * dt, 149.99999999));
 
-				if (dvc->isDown(Key::KEY_SHIFT))
+				if (dvc->isDown(Key::Key_shift))
 					isShift = true;
 
-				if (dvc->isDown(Key::KEY_CTRL))
+				if (dvc->isDown(Key::Key_ctrl))
 					isCtrl = true;
 
 			}
 			else if (dvc->isType(InputDevice::MOUSE)) {
 
-				f64 delta = dvc->getCurrentAxis(MouseAxis::AXIS_WHEEL);
+				f64 delta = dvc->getCurrentAxis(MouseAxis::Axis_wheel_y);
 
 				if (delta)
 					speed = oic::Math::clamp(speed * 1 + (delta / 1024), 0.5, 5.0);
@@ -911,14 +937,14 @@ struct RaytracingInterface : public ViewportInterface {
 
 	void onInputActivate(ViewportInfo *vp, const InputDevice *dev, InputHandle ih) final override {
 	
-		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::BUTTON_LEFT)
+		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::Button_left)
 			vp->hint = ViewportInfo::Hint(vp->hint | ViewportInfo::CAPTURE_CURSOR);
 
 	}
 
 	void onInputDeactivate(ViewportInfo *vp, const InputDevice *dev, InputHandle ih) final override {
 
-		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::BUTTON_LEFT)
+		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::Button_left)
 			vp->hint = ViewportInfo::Hint(vp->hint & ~ViewportInfo::CAPTURE_CURSOR);
 
 	}
@@ -939,9 +965,7 @@ int main() {
 		)
 	);
 
-	//TODO: Better way of stalling than this; like interrupt
-	while (System::viewportManager()->size())
-		System::wait(250_ms);
+	System::viewportManager()->waitForExit();
 
 	return 0;
 }

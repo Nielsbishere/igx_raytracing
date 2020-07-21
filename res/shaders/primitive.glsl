@@ -83,9 +83,9 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout vec3 hit, inout vec3
 	vec3 dir = normalize(plane.xyz);
 	float dif = dot(r.dir, dir);
 
-	float hitT = -(dot(r.pos, dir) + plane.w) / dif;
+	//TODO: dif == 0 shouldn't be a problem
 
-	//TODO: If dif == 0, nan
+	float hitT = -(dot(r.pos, dir) + plane.w) / dif;
 
 	if(hitT >= delta && hitT < hit.z) {
 		hit.z = hitT;
