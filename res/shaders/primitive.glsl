@@ -1,7 +1,7 @@
 
 const float noHit = 3.4028235e38;
-const float epsilon = 1e-3;		//epsilon for offsets
-const float delta = 1e-2;		//epsilon for calculations
+const float epsilon = 1e-2;		//epsilon for offsets
+const float delta = 1e-1;		//epsilon for calculations
 
 const uint shadowHit = 0xFFFFFFFF;		//loc1D is set to this when a shadow hit
 const uint noRayHit = 0xFFFFFFFF;		//loc1D is set to this when a primary didn't hit
@@ -24,6 +24,15 @@ struct RayPayload {
 
 	vec3 color;				//Color this ray contributes
 	float maxDist;			//Maximum hit distance along the ray's axis
+};
+
+struct ShadowPayload {
+
+	vec3 pos;
+	uint loc1D;
+
+	vec3 dir;
+	float maxDist;
 };
 
 struct Triangle {
@@ -69,12 +78,18 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout vec3 hit) {
 	return false;
 }
 
-bool rayIntersectPlane(const Ray r, const vec4 plane, inout vec3 hit) {
+bool rayIntersectPlane(const Ray r, const vec4 plane, inout vec3 hit, inout vec3 n) {
 
-	float hitT = -(dot(r.pos, plane.xyz) + plane.w) / dot(r.dir, plane.xyz);
+	vec3 dir = normalize(plane.xyz);
+	float dif = dot(r.dir, dir);
+
+	float hitT = -(dot(r.pos, dir) + plane.w) / dif;
+
+	//TODO: If dif == 0, nan
 
 	if(hitT >= delta && hitT < hit.z) {
 		hit.z = hitT;
+		n = dif < 0 ? -dir : dir;
 		return true;
 	}
 

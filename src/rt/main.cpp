@@ -38,7 +38,7 @@ struct RaytracingInterface : public ViewportInterface {
 	ShaderBufferRef 
 		raygenData, sphereData, planeData, triangleData, lightData,
 		materialData, shadowRayData, counterBuffer, dispatchArgs, positionBuffer,
-		reflectionRayData, cubeData;
+		reflectionRayData, cubeData, shadowColors, shadowOutput;
 
 	UploadBufferRef uploadBuffer;
 
@@ -105,6 +105,17 @@ struct RaytracingInterface : public ViewportInterface {
 		f32 maxDist;
 
 		Vec2u32 color, padding;
+	};
+
+	//A shadow payload
+	struct ShadowPayload {
+
+		Vec3f32 pos;
+		u32 loc1D;
+
+		Vec3f32 dir;
+		f32 maxDist;
+
 	};
 
 	//The counter buffer
@@ -195,7 +206,7 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 				RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
 				RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
-				RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(RayPayload)),
+				RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(ShadowPayload)),
 				RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
 				RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(Vec4u32)),
 				RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
@@ -203,7 +214,9 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
 				RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube)),
 				RegisterLayout(NAME("Accumulation buffer"), 13, TextureType::TEXTURE_2D, 1, ShaderAccess::COMPUTE, GPUFormat::RGBA32f, true),
-				RegisterLayout(NAME("Reflection buffer"), 14, TextureType::TEXTURE_2D, 2, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true)
+				RegisterLayout(NAME("Reflection buffer"), 14, TextureType::TEXTURE_2D, 2, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true),
+				RegisterLayout(NAME("Shadow output"), 15, GPUBufferType::STRUCTURED, 11, ShaderAccess::COMPUTE, sizeof(u32)),
+				RegisterLayout(NAME("Shadow colors"), 16, GPUBufferType::STRUCTURED, 12, ShaderAccess::COMPUTE, sizeof(Vec2u32))
 			)
 		};
 
@@ -605,7 +618,25 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Shadow ray buffer"),
 			ShaderBuffer::Info(
 				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("shadowRays"), ShaderBuffer::Layout(0, sizeof(RayPayload) * avgShadowRaysPerPixel * size.prod()) } }
+				{ { NAME("shadowRays"), ShaderBuffer::Layout(0, sizeof(ShadowPayload) * maxShadowRaysPerPixel * size.prod()) } }
+			)
+		};
+
+		shadowColors.release();
+		shadowColors = {
+			g, NAME("Shadow color buffer"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				{ { NAME("shadowColors"), ShaderBuffer::Layout(0, sizeof(Vec2u32) * maxShadowRaysPerPixel * size.prod()) } }
+			)
+		};
+
+		shadowOutput.release();
+		shadowOutput = {
+			g, NAME("Shadow output buffer"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE,
+				{ { NAME("shadowOutput"), ShaderBuffer::Layout(0, u64(std::ceil(maxShadowRaysPerPixel * size.prod() / 32.0)) * (32 / 8)) } }
 			)
 		};
 
@@ -633,7 +664,9 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->updateDescriptor(11, { reflectionRayData, 0 });
 		raytracingDescriptors->updateDescriptor(13, { raytracingAccumulation, TextureType::TEXTURE_2D });
 		raytracingDescriptors->updateDescriptor(14, { reflectionBuffer, TextureType::TEXTURE_2D });
-		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 }, { 13, 2 } });
+		raytracingDescriptors->updateDescriptor(15, { shadowOutput, 0 });
+		raytracingDescriptors->updateDescriptor(16, { shadowColors, 0 });
+		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 }, { 13, 4 } });
 
 		swapchain->onResize(size);
 

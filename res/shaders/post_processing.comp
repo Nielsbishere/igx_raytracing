@@ -25,9 +25,17 @@ layout(binding=5, std140) readonly buffer Counters {
 	uint reflrectionCounter;
 };
 
-layout(binding=4, std140) readonly buffer ShadowRays {
-	RayPayload shadowRays[];
+layout(binding=11, std140) readonly buffer ShadowOutput {
+	uint shadowOutput[];
 };
+
+layout(binding=12, std140) readonly buffer ShadowColors {
+	uvec2 shadowColors[];
+};
+
+float isShadowed(uint id) {
+	return float((shadowOutput[id >> 5] & (1 << id)) == 0);
+}
 
 //Handling intersection
 
@@ -49,8 +57,13 @@ void main() {
 
 	if(shadowStart != noRayHit)
 		for(uint i = 0; i < lights.length(); ++i) {
-			const RayPayload shadowRay = shadowRays[shadowStart + i];
-			diffuse += shadowRay.color * float(shadowRay.loc1D == 0);
+
+			uint rayId = shadowStart + i;
+
+			uvec2 col16 = shadowColors[rayId];
+			vec3 col = vec3(unpackHalf2x16(col16.x), unpackHalf2x16(col16.y).x);
+
+			diffuse += col * isShadowed(rayId);
 		}
 
 	//Increment accumulationBuffer

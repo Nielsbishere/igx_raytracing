@@ -1,13 +1,15 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_shader_ballot : require
+#extension GL_ARB_gpu_shader_int64 : require
 #include "defines.glsl"
 #include "trace.glsl"
 #include "utils.glsl"
 
 layout(local_size_x = THREADS, local_size_y = 1, local_size_z = 1) in;
 
-layout(binding=4, std140) buffer ShadowRays {
-	RayPayload shadowRays[];
+layout(binding=4, std140) readonly buffer ShadowRays {
+	ShadowPayload shadowRays[];
 };
 
 layout(binding=8, std140) readonly buffer PositionBuffer {
@@ -19,6 +21,10 @@ layout(binding=5, std140) readonly buffer Counters {
 	uint reflrectionCounter;
 };
 
+layout(binding=11, std140) writeonly buffer ShadowOutput {
+	uint shadowOutput[];
+};
+
 //Handling intersection
 
 void main() {
@@ -28,14 +34,31 @@ void main() {
 	if(shadowId >= shadowCounter)
 		return;
 
-	const RayPayload payload = shadowRays[shadowId];
+	const ShadowPayload payload = shadowRays[shadowId];
 
-	//Shoot ray
+	//Shoot rays for this warp
 	
 	const Ray ray = Ray(
-		positions[payload.loc1D], 0,
+		payload.pos, 0,
 		payload.dir, 0
 	);
 
-	shadowRays[shadowId].loc1D = uint(traceOcclusion(ray, payload.maxDist));
+	uint64_t hitRays = ballotARB(traceOcclusion(ray, payload.maxDist));
+
+	//Store rays for the first thread in this warp
+	//Assume 32 (NV) or 64 (AMD)
+
+	if(gl_SubGroupInvocationARB == 0) {
+
+		uint shadowDiv32 = shadowId >> 5;
+
+		if(gl_SubGroupSizeARB == 32)
+			shadowOutput[shadowDiv32] = uint(hitRays);
+
+		else {
+			uint shadowDiv32x2 = shadowDiv32 << 1;
+			shadowOutput[shadowDiv32x2 | 1] = uint(hitRays >> 32);
+			shadowOutput[shadowDiv32x2]		= uint(hitRays);
+		}
+	}
 }

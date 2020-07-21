@@ -6,6 +6,7 @@
 #include "light.glsl"
 
 layout(binding=0, outputFormat) writeonly uniform image2D rayOutput;
+layout(binding=2, outputFormat) writeonly uniform image2D reflectionOutput;
 
 layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
 
@@ -14,7 +15,7 @@ layout(binding=3, std140) readonly buffer Materials {
 };
 
 layout(binding=4, std140) writeonly buffer ShadowRays {
-	RayPayload shadowRays[];
+	ShadowPayload shadowRays[];
 };
 
 layout(binding=5, std140) buffer Counters {
@@ -34,6 +35,10 @@ layout(binding=8, std140) writeonly buffer PositionBuffer {
 
 layout(binding=9, std140) writeonly buffer ReflectionRays {
 	RayPayload reflectionRays[];
+};
+
+layout(binding=12, std140) writeonly buffer ShadowColors {
+	uvec2 shadowColors[];
 };
 
 //TODO: Lights can also have textures 
@@ -88,12 +93,14 @@ vec3 shadeLight(
 		if(shadowId >= shadowRays.length())
 			return color;
 
-		shadowRays[shadowId] = RayPayload(
-			-l,
+		shadowRays[shadowId] = ShadowPayload(
+			pos,
 			loc1D,
-			color,
+			-l,
 			maxDist
 		);
+
+		shadowColors[shadowId] = uvec2(packHalf2x16(color.rg), packHalf2x16(color.bb));
 		
 		return vec3(0, 0, 0);
 
@@ -172,12 +179,14 @@ vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint mate
 
 	if(hit.z == noHit) {
 		positions[loc1D] = Position(vec3(0), noRayHit);
+		imageStore(reflectionOutput, ivec2(loc1D % width, loc1D / width), vec4(0));
 		return skyboxColor;
 	}
 
 	const vec3 position = r.pos + r.dir * hit.z;
 	
 	const vec3 v = normalize(position - eye);
+
 	const float NdotV = max(dot(-normal, v), 0);
 	
 	vec3 color = shade(materials[material], position, normal, v, NdotV, loc1D);

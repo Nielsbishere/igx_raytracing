@@ -67,12 +67,9 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 
 	#ifdef ALLOW_PLANES
 
-	for(int i = 0; i < planeCount; ++i) {
-		if(rayIntersectPlane(ray, planes[i], hit)) {
+	for(int i = 0; i < planeCount; ++i)
+		if(rayIntersectPlane(ray, planes[i], hit, normal))
 			material = i;
-			normal = normalize(planes[i].xyz);
-		}
-	}
 
 	#endif
 
@@ -117,8 +114,10 @@ bool traceOcclusion(const Ray ray, const float maxDist) {
 
 	#ifdef ALLOW_PLANES
 
+	vec3 n;
+
 	for(int i = 0; i < planes.length(); ++i)
-		rayIntersectPlane(ray, planes[i], hit);
+		rayIntersectPlane(ray, planes[i], hit, n);
 
 	#endif
 
