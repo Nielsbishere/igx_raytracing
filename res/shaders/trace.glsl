@@ -1,4 +1,21 @@
 #include "primitive.glsl"
+#include "rand_util.glsl"
+
+//Buffers
+
+const uint 
+	DisplayType_Default = 0, 
+	DisplayType_Accumulation = 1,
+	DisplayType_Intersection_attributes = 2,
+	DisplayType_Normals = 3,
+	DisplayType_Albedo = 4,
+	DisplayType_Light_buffer = 5,
+	DisplayType_Reflection_buffer = 6,
+	DisplayType_No_secondaries = 7,
+	DisplayType_UI_Only = 8,
+	DisplayType_Material = 9,
+	DisplayType_Object = 10,
+	DisplayType_Intersection_side = 11;
 
 layout(binding=0, std140) uniform GPUData {
 
@@ -27,6 +44,7 @@ layout(binding=0, std140) uniform GPUData {
 	uint cubeCount;
 
 	uint planeCount;
+	uint displayType;
 
 };
 
@@ -46,10 +64,20 @@ layout(binding=10, std140) readonly buffer Cubes {
 	Cube cubes[];
 };
 
-void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint material) {
+//Intersections for colors
+
+Hit traceGeometry(const Ray ray) {
+
+	Hit hit;
+	hit.hitT = noHit;
+	hit.intersection = vec2(0);
+	hit.material = hit.object = 0;
+	hit.normal = vec3(0);
 
 	//TODO: Only get normal of one object
 	//TODO: Spheres and tris are upside down
+
+	uint j = 0;
 
 	#ifdef ALLOW_SPHERES
 
@@ -58,52 +86,61 @@ void traceGeometry(const Ray ray, inout vec3 hit, inout vec3 normal, inout uint 
 		const vec4 sphere = spheres[i];
 
 		if(rayIntersectSphere(ray, sphere, hit)) {
-			material = i;
-			normal = normalize(sphere.xyz - (hit.z * ray.dir + ray.pos));
+			hit.object = i;
+			hit.material = i;
 		}
 	}
+
+	j += sphereCount;
 
 	#endif 
 
 	#ifdef ALLOW_PLANES
 
 	for(int i = 0; i < planeCount; ++i)
-		if(rayIntersectPlane(ray, planes[i], hit, normal))
-			material = i;
+		if(rayIntersectPlane(ray, planes[i], hit)) {
+			hit.material = i;
+			hit.object = i + j;
+		}
+
+	j += planeCount;
 
 	#endif
 
 	#ifdef ALLOW_TRIANGLES
 
-	//Flat shading for now TODO: Normals
-
 	for(int i = 0; i < triangleCount; ++i) {
 		if(rayIntersectTri(ray, triangles[i], hit)) {
-			material = triangles[i].material;
-			normal = normalize(cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0));
+			hit.material = triangles[i].material;
+			hit.object = i + j;
+			hit.normal = normalize(cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0));
 		}
 	}
+
+	j += triangleCount;
 
 	#endif
 
 	#ifdef ALLOW_CUBES
 
-	//TODO: Normals
-
 	for(int i = 0; i < cubeCount; ++i) {
 		if(rayIntersectCube(ray, cubes[i], hit)) {
-			material = cubes[i].material;
-			normal = normalize((cubes[i].end + cubes[i].start) * 0.5 - (hit.z * ray.dir + ray.pos));
+			hit.material = cubes[i].material;
+			hit.object = i + j;
 		}
 	}
 
 	#endif
 
+	return hit;
 }
+
+//Optimized intersections for shadows
 
 bool traceOcclusion(const Ray ray, const float maxDist) {
 
-	vec3 hit = vec3(0, 0, noHit);
+	Hit hit;
+	hit.hitT = noHit;
 
 	#ifdef ALLOW_SPHERES
 
@@ -114,10 +151,8 @@ bool traceOcclusion(const Ray ray, const float maxDist) {
 
 	#ifdef ALLOW_PLANES
 
-	vec3 n;
-
 	for(int i = 0; i < planes.length(); ++i)
-		rayIntersectPlane(ray, planes[i], hit, n);
+		rayIntersectPlane(ray, planes[i], hit);
 
 	#endif
 
@@ -135,5 +170,22 @@ bool traceOcclusion(const Ray ray, const float maxDist) {
 
 	#endif
 
-	return hit.z < maxDist;
+	return hit.hitT < maxDist;
+}
+
+//Setting up primaries
+
+Ray calculatePrimary(const uvec2 loc) {
+
+	//Calculate center pixel, jittered for AA
+
+	const vec2 centerPixel = (vec2(loc) + rand(loc + vec2(randomX, randomY))) * invRes;
+	
+	const vec3 right = p1 - p0;
+	const vec3 up = p2 - p0;
+
+	const vec3 pos = p0 + centerPixel.x * right + centerPixel.y * up;
+	const vec3 dir = normalize(pos - eye);
+
+	return Ray(pos, 0, dir, 0);
 }

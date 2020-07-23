@@ -7,12 +7,9 @@
 layout(binding=0, outputFormat) uniform image2D rayOutput;
 layout(binding=1, rgba32f) uniform image2D accumulationBuffer;
 layout(binding=2, outputFormat) uniform image2D reflectionOutput;
+layout(binding=0) uniform sampler2DMS ui;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(binding=7, std140) readonly buffer Lights {
-	Light lights[];
-};
 
 struct Position { vec3 pos; uint shadowStart; };
 
@@ -23,6 +20,10 @@ layout(binding=8, std140) readonly buffer PositionBuffer {
 layout(binding=5, std140) readonly buffer Counters {
 	uint shadowCounter;
 	uint reflrectionCounter;
+};
+
+layout(binding=13, std140) readonly buffer HitBuffer {
+	Hit hitBuffer[];
 };
 
 layout(binding=11, std140) readonly buffer ShadowOutput {
@@ -37,6 +38,29 @@ float isShadowed(uint id) {
 	return float((shadowOutput[id >> 5] & (1 << id)) == 0);
 }
 
+vec4 tosRGB(vec4 rgb) {
+
+	const vec4 rgb2 = rgb * rgb;
+
+	return 
+			0.012522878 * rgb +
+            0.682171111 * rgb2 +
+            0.305306011 * rgb2 * rgb;
+}
+
+vec4 toRGB(vec4 srgb) {
+
+	vec4 s1 = sqrt(srgb);
+	vec4 s2 = sqrt(s1);
+	vec4 s4 = sqrt(s2);
+
+	return
+		0.662002687 * s1 + 
+		0.684122060 * s2 - 
+		0.323583601 * s4 - 
+		0.0225411470 * srgb;
+}
+
 //Handling intersection
 
 void main() {
@@ -48,6 +72,7 @@ void main() {
 	if(loc.x >= width || loc.y >= height) return;
 
 	//Store
+	/*
 
 	vec3 diffuse = imageLoad(rayOutput, loc).rgb;
 	diffuse += imageLoad(reflectionOutput, loc).rgb;
@@ -67,28 +92,120 @@ void main() {
 		}
 
 	//Increment accumulationBuffer
+	*/
 
-	vec4 accum = sampleCount == 1 ? vec4(0) : imageLoad(accumulationBuffer, loc);
+	//vec3 color = imageLoad(reflectionOutput, loc).rgb;
+	
+	//Calculate hit
 
-	accum += vec4(diffuse, 0);
+	const uint loc1D = loc.x + loc.y * width;
+	const Ray prim = calculatePrimary(loc);
 
-	imageStore(accumulationBuffer, loc, accum);
+	const Hit hit = hitBuffer[loc1D];
 
-	vec3 color = accum.rgb / sampleCount;
+	vec3 color;
+
+	switch(displayType) {
+
+		case DisplayType_Default: {
+			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
+			color = shadeHit(prim, hit, reflectionColor, skyboxColor);
+			break;
+		}
+
+		case DisplayType_Accumulation: {
+
+			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
+			color = shadeHit(prim, hit, reflectionColor, skyboxColor);
+		
+			if(sampleCount > 1)
+				color += imageLoad(accumulationBuffer, loc).rgb;
+
+			imageStore(accumulationBuffer, loc, vec4(color, 0));
+
+			color /= sampleCount;
+			break;
+		}
+
+		case DisplayType_Intersection_attributes:
+			color = vec3(hit.intersection.xy - (floor(hit.intersection.x) - 2), 0);
+			break;
+
+		case DisplayType_Normals:
+			color = hit.normal.xyz * 0.5 + 0.5;
+			break;
+
+		case DisplayType_Albedo:
+			color = hit.hitT != noHit ?  materials[hit.material].albedo : skyboxColor;
+			break;
+
+		case DisplayType_Light_buffer: {
+
+			const uint loc1D = loc.x + loc.y * width;
+			const uint shadowStart = positions[loc1D].shadowStart;
+		
+			if(shadowStart != noRayHit)
+				for(uint i = 0; i < lights.length(); ++i) {
+		
+					uint rayId = shadowStart + i;
+		
+					uvec2 col16 = shadowColors[rayId];
+					vec3 col = vec3(unpackHalf2x16(col16.x), unpackHalf2x16(col16.y).x);
+		
+					color += col * isShadowed(rayId);
+				}
+
+			break;
+		}
+
+		case DisplayType_Reflection_buffer:
+			color = imageLoad(reflectionOutput, loc).rgb;
+			break;
+
+		case DisplayType_No_secondaries:
+			color = shadeHit(prim, hit, skyboxColor, skyboxColor);
+			break;
+
+		case DisplayType_UI_Only:
+			color = vec3(0);
+			break;
+
+		case DisplayType_Material:
+			color = vec3(float(hit.hitT != noHit ? hit.material + 1 : 0) / (materials.length() + 1));
+			break;
+
+		case DisplayType_Object:
+			color = vec3(float(hit.hitT != noHit ? hit.object + 1 : 0) / (1 + triangleCount + sphereCount + cubeCount + planeCount));
+			break;
+
+		case DisplayType_Intersection_side:
+			color = vec3((floor(hit.intersection.xy) - 2) / 6, 0);
+			break;
+	}
 
 	//Exposure mapping
 
-	//if(any(isnan(color)))				//TODO: Why is diffuse NaN? invalid data in rayOutput or shadowRays?
-	//	color = vec3(0, 0, 0);
+	if(any(isnan(color)))				//TODO: Why is diffuse NaN? invalid data in rayOutput or shadowRays?
+		color = vec3(0, 0, 10000);
 
 	color = vec3(1, 1, 1) - exp(-color * exposure);
 
-	//Gamma correction
+	//Blend with UI
 
-	color = 
-			color * 0.012522878 +
-            color * color * 0.682171111 +
-            color * color * color * 0.305306011;
+	int sampleCount = textureSamples(ui);
 
+	ivec2 sampleLoc = ivec2(loc.x, height - loc.y);
+
+	vec4 uiColor = toRGB(texelFetch(ui, sampleLoc, 0));
+
+	for(int i = 1; i < sampleCount; ++i)
+		uiColor += toRGB(texelFetch(ui, sampleLoc, i));
+
+	uiColor /= sampleCount;
+
+	color = mix(color, uiColor.rgb, float(uiColor.a != 0));
+
+	//Store
+	
 	imageStore(rayOutput, loc, vec4(color, 1));
 }

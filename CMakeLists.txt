@@ -50,7 +50,7 @@ source_group("Shader includes" FILES ${shaderIncludes})
 source_group("Shader binaries" FILES ${shaderBinaries})
 
 if(doShaderRecreate)
-	add_custom_command(TARGET rtigx POST_BUILD COMMAND compile ${shaders} WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res/shaders")
+	add_custom_command(TARGET rtigx PRE_BUILD COMMAND compile ${shaders} WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res/shaders")
 endif()
 
 add_virtual_files(

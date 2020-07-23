@@ -2,169 +2,54 @@
 #extension GL_GOOGLE_include_directive : require
 #include "defines.glsl"
 #include "trace.glsl"
-#include "material.glsl"
 #include "light.glsl"
 
-layout(binding=2, outputFormat) uniform image2D reflectionOutput;
+layout(binding=2, outputFormat) writeonly uniform image2D reflectionOutput;
 
-layout(local_size_x = THREADS, local_size_y = 1, local_size_z = 1) in;
-
-layout(binding=3, std140) readonly buffer Materials {
-	Material materials[];
+layout(binding=13, std140) readonly buffer HitBuffer {
+	Hit hitBuffer[];
 };
-
-//TODO: Recursive shadows
-//layout(binding=4, std140) writeonly buffer ShadowRays {
-//	RayPayload shadowRays[];
-//};
-
-layout(binding=5, std140) readonly buffer Counters {
-	uint shadowCounter;
-	uint reflrectionCounter;
-};
-
-layout(binding=7, std140) readonly buffer Lights {
-	Light lights[];
-};
-
-layout(binding=8, std140) readonly buffer PositionBuffer {
-	vec3 positions[];
-};
-
-layout(binding=9, std140) readonly buffer ReflectionRays {
-	RayPayload reflectionRays[];
-};
-
-//Per light shading
-
-vec3 shadeLight(
-	const vec3 F0,
-	const Material m,
-	const Light light, 
-	const vec3 pos,
-	const vec3 n,
-	const vec3 v,
-	const float ao,
-	const float NdotV
-) {
-
-	vec3 l = light.dir;
-	float invSquareDist = 1;
-	float maxDist = noHit;
-
-	if(light.type == LightType_Point) {
-
-		l = pos - light.pos;
-		const float dst = length(l);
-		invSquareDist = max(1 - dst / light.rad, 0);		//TODO: This should be dst^2
-
-		//Calculate params for point light shadows
-
-		maxDist = dst;				//TODO: This is along the direction of the light, it should be along the distance of the ray
-	}
-
-	l = normalize(l);
-
-	//Calculate color
-
-	float k = m.roughness + 1;
-	k *= k / 8;
-	
-	const float NdotL = max(dot(n, l), 0);
-
-	return cookTorrance(F0, m.albedo, light, n, l, v, NdotV, invSquareDist, m.roughness, m.metallic, k, NdotL) * ao;
-}
-
-//Trace reflection ray
-
-vec3 traceReflection(const vec3 n, const vec3 v, const float NdotV, const vec3 kS) {
-	return kS * skyboxColor;
-}
-
-//Per pixel shading
-
-vec3 shade(
-	const Material m,
-	const vec3 pos,
-	const vec3 n, 
-	const vec3 v,
-	const float NdotV
-) {
-	const float ao = 1;				//TODO:
-
-	const vec3 F0 = mix(vec3(0.04), m.albedo, m.metallic);
-
-	const vec3 kS = fresnelSchlickRoughness(F0, NdotV, m.metallic, m.albedo, m.roughness);
-	const vec3 kD = (1 - kS) * (1 - m.metallic);
-
-	vec3 lighting = vec3(0, 0, 0);
-
-	//TODO: Perfect mirrors don't need shadow rays
-
-	for(uint i = 0; i < lights.length(); ++i)
-			lighting += shadeLight(F0, m, lights[i], pos, n, v, ao, NdotV);
-
-	vec3 reflection = traceReflection(n, v, NdotV, kS);
-
-	return (m.ambient + kD / pi) * ao * m.albedo + reflection + lighting + m.emissive;
-}
-
-//Handling intersection
-
-vec3 doIntersect(const Ray r, const vec3 hit, const vec3 normal, const uint material) {
-
-	if(hit.z == noHit)
-		return skyboxColor;
-
-	const vec3 position = r.pos + r.dir * hit.z;
-	//outPos = position + normal * epsilon;
-	
-	const vec3 v = normalize(position - eye);
-	const float NdotV = max(dot(-normal, v), 0);
-
-	return shade(materials[material], position, normal, v, NdotV);
-}
-
-vec3 trace(const Ray ray) {
-
-	vec3 hit = vec3(0, 0, noHit);
-	vec3 normal;
-	uint material;
-
-	traceGeometry(ray, hit, normal, material);
-
-	return doIntersect(ray, hit, normal, material);
-}
 
 //
 
+layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
 
 void main() {
 
-	//Get ray position
+	//Check if out of bounds
 	
-	const uint reflectionId = gl_GlobalInvocationID.x;
+	const uvec2 loc = gl_GlobalInvocationID.xy;
 
-	if(reflectionId >= reflrectionCounter) return;
+	if(loc.x >= width || loc.y >= height)
+		return;
 
-	//Shoot ray
-	
-	const RayPayload payload = reflectionRays[reflectionId];
-	const uint loc1D = payload.loc1D;
+	//Calculate hit
 
-	//Shoot ray
-	
+	const uint loc1D = loc.x + loc.y * width;
+	const Ray prim = calculatePrimary(loc);
+
+	const Hit hit = hitBuffer[loc1D];
+
+	if(hit.hitT == noHit) {
+		imageStore(reflectionOutput, ivec2(loc), vec4(0));
+		return;
+	}
+
+	const vec3 pos = prim.pos + prim.dir * hit.hitT;
+
+	//Reflect ray
+
+	const vec3 refl = reflect(normalize(pos - eye), hit.normal);
+
 	const Ray ray = Ray(
-		positions[loc1D], 0,
-		payload.dir, 0
+		pos + hit.normal * epsilon, 0,
+		refl, 0
 	);
 
-	ivec2 loc = ivec2(loc1D % width, loc1D / width);
-
-	vec3 col = payload.color * trace(ray);
+	vec3 col = shadeRay(ray, skyboxColor, skyboxColor);
 
 	if(any(isnan(col)))
 		col = vec3(1000, 0, 0);
 
-	imageStore(reflectionOutput, loc, vec4(col, 0));
+	imageStore(reflectionOutput, ivec2(loc), vec4(col, 0));
 }

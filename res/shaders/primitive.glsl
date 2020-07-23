@@ -56,10 +56,21 @@ struct Cube {
 	uint material;
 };
 
+struct Hit {
+	
+	vec2 intersection;
+	float hitT;
+	uint material;
+
+	vec3 normal;
+	uint object;
+
+};
+
 
 //Ray intersections
 
-bool rayIntersectSphere(const Ray r, const vec4 sphere, inout vec3 hit) {
+bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit) {
 
 	const vec3 dif = sphere.xyz - r.pos;
 	const float t = dot(dif, r.dir);
@@ -70,15 +81,30 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout vec3 hit) {
 	const bool outOfSphere = Q2 > sphere.w;
 	const float hitT = t - sqrt(sphere.w - Q2);
 
-	if(!outOfSphere && hitT >= 0 && hitT < hit.z) {
-		hit.z = hitT;
+	if(!outOfSphere && hitT >= 0 && hitT < hit.hitT) {
+
+		hit.hitT = hitT;
+
+		const vec3 o = hitT * r.dir + r.pos;
+
+		hit.normal = normalize(sphere.xyz - o);
+
+		float latitude = asin(hit.normal.z);
+		float longitude = atan(hit.normal.y / hit.normal.x);
+
+		//Limits of asin and atan are pi/2, so we divide by that to get normalized coordinates
+		//We then * 0.5 + 0.5 to get a uv in that representation
+		//if lat == NaN && lon == NaN: x = 1 or x = -1
+
+		hit.intersection = vec2(latitude, longitude) * (0.636619746685 * 0.5) + 2.5;
+
 		return true;
 	}
 
 	return false;
 }
 
-bool rayIntersectPlane(const Ray r, const vec4 plane, inout vec3 hit, inout vec3 n) {
+bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit) {
 
 	vec3 dir = normalize(plane.xyz);
 	float dif = dot(r.dir, dir);
@@ -87,16 +113,27 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout vec3 hit, inout vec3
 
 	float hitT = -(dot(r.pos, dir) + plane.w) / dif;
 
-	if(hitT >= delta && hitT < hit.z) {
-		hit.z = hitT;
-		n = dif < 0 ? -dir : dir;
+	if(hitT >= delta && hitT < hit.hitT) {
+
+		hit.hitT = hitT;
+		hit.normal = dif < 0 ? -dir : dir;
+
+		vec3 o = hitT * r.dir + r.pos;
+
+		vec3 planeX = cross(plane.xyz, vec3(0, 0, 1));
+		vec3 planeZ = cross(plane.xyz, vec3(1, 0, 0));
+
+		hit.intersection = fract(vec2(dot(o, planeX), dot(o, planeZ))) + vec2(int(dif < 0) << 1, 0) + 2;
+
 		return true;
 	}
 
 	return false;
 }
 
-bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
+bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit) {
+
+	//TODO: Triangles act weird >:(
 
 	const vec3 p1_p0 = tri.p1 - tri.p0;
 	const vec3 p2_p0 = tri.p2 - tri.p0;
@@ -119,26 +156,56 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout vec3 hit) {
 	
 	const float t = f * dot(p2_p0, q);
 	
-	if (t <= delta || t >= 1 / delta || t >= hit.z) return false;
+	if (t <= delta || t >= 1 / delta || t >= hit.hitT) return false;
 
-	hit = vec3(u, v, t);
+	hit.intersection = vec2(u + (int(sign(a)) << 1), v) + 2;
+	hit.hitT = t;
 	return true;
 }
 
-bool rayIntersectCube(const Ray r, const Cube cube, inout vec3 hit) {
+bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit) {
 
 	vec3 revDir = 1 / r.dir;
 
 	vec3 startDir = (cube.start - r.pos) * revDir;
 	vec3 endDir = (cube.end - r.pos) * revDir;
 
-	float tmin = max(max(min(startDir.x, endDir.x), min(startDir.y, endDir.y)), min(startDir.z, endDir.z));
-	float tmax = min(min(max(startDir.x, endDir.x), max(startDir.y, endDir.y)), max(startDir.z, endDir.z));
+	vec3 mi = min(startDir, endDir);
+	vec3 ma = max(startDir, endDir);
 
-	if(tmax < 0 || tmin > tmax || tmin > hit.z)
+	float tmin = max(max(mi.x, mi.y), mi.z);
+	float tmax = min(min(ma.x, ma.y), ma.z);
+
+	if(tmax < 0 || tmin > tmax || tmin > hit.hitT)
 		return false;
 
-	hit.z = tmin;
+	//Determine which plane it's on (of the x, y or z plane)
+	//and then make sure the sign is maintained to make it into a side
+
+	vec3 pos = (r.dir * tmin + r.pos) - cube.start;
+	pos /= cube.end;
+
+	if(tmin == mi.x) {
+		int isLeft = int(mi.x == startDir.x);
+		hit.normal = vec3(isLeft * -2 + 1, 0, 0);
+		hit.intersection = pos.yz + vec2(isLeft * 3 + 2, 0) + 2;
+	}
+
+	else if(tmin == mi.y) {
+		int isDown = int(mi.y == startDir.y);
+		hit.normal = vec3(0, isDown * -2 + 1, 0);
+		hit.intersection = pos.xz + vec2(isDown + 3, 0) + 2;
+	}
+
+	else {
+		int isBack = int(mi.z == startDir.z);
+		hit.normal = vec3(0, 0, isBack * -2 + 1);
+		hit.intersection = pos.xy + vec2(isBack * 5 + 1, 0) + 2;
+	}
+
+	//
+
+	hit.hitT = tmin;
 	return true;
 }
 

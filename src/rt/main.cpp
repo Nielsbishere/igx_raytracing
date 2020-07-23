@@ -6,6 +6,7 @@
 #include "system/viewport_interface.hpp"
 #include "system/local_file_system.hpp"
 #include "gui/gui.hpp"
+#include "gui/struct_inspector.hpp"
 #include "gui/window.hpp"
 #include "types/mat.hpp"
 #include "input/keyboard.hpp"
@@ -23,12 +24,22 @@ using namespace igx;
 using namespace oic;
 
 oicExposedEnum(LightType, u16, Directional, Point, Spot);
+oicExposedEnum(
+	DisplayType, u32, 
+	Default, Accumulation,
+	Intersection_attributes, Normals, Albedo,
+	Light_buffer, Reflection_buffer, No_secondaries,
+	UI_Only, Material, Object,
+	Intersection_side
+);
 
 struct RaytracingInterface : public ViewportInterface {
 
 	Graphics& g;
 
 	//Resources
+
+	GUI gui;
 
 	SwapchainRef swapchain;
 	CommandListRef cl;
@@ -41,13 +52,15 @@ struct RaytracingInterface : public ViewportInterface {
 	ShaderBufferRef 
 		raygenData, sphereData, planeData, triangleData, lightData,
 		materialData, shadowRayData, counterBuffer, dispatchArgs, positionBuffer,
-		reflectionRayData, cubeData, shadowColors, shadowOutput;
+		reflectionRayData, cubeData, shadowColors, shadowOutput, gbuffer;
 
 	UploadBufferRef uploadBuffer;
 
 	Vec2u32 res;
 	Vec3f32 eye{ 0, 0, 7 }, eyeDir = { 0, 0, -1 };
 	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
+
+	SamplerRef samplerNearest;
 
 	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = 70;
@@ -98,6 +111,20 @@ struct RaytracingInterface : public ViewportInterface {
 		u32 cubeCount;
 
 		u32 planeCount;
+		DisplayType displayType;
+
+		InflectWithName(
+			{
+				"Eye x", "Eye y", "Eye z",
+				"Skybox color r",  "Skybox color g",  "Skybox color b",
+				"Exposure"
+			},
+			eye.x, eye.y, eye.z,
+			skyboxColor.x, skyboxColor.y, skyboxColor.z,
+			exposure,
+			displayType
+		);
+
 	};
 
 	//A ray payload
@@ -218,14 +245,38 @@ struct RaytracingInterface : public ViewportInterface {
 		maxShadowRaysPerPixel = 6,		//Expect 6 shadow rays per pixel max
 		avgShadowRaysPerPixel = 3;		//Expect 3 shadow rays per pixel avg
 
+	struct Hit {
+
+		Vec2f32 intersection;
+		f32 hitT;
+		u32 materialId;
+
+		Vec3f32 nrm;
+		u32 objectId;
+
+	};
+
 	//GPU data
 	PipelineLayoutRef pipelineLayout;
 
+	//UI
+	StructInspector<GPUData*> inspector;
+
 	//Create resources
 
-	RaytracingInterface(Graphics& g) : g(g) {
+	RaytracingInterface(Graphics& g) : g(g), gui(g) {
+
+		gui.addWindow(Window("", 0, {}, { 200, 350 }, &inspector, Window::DEFAULT_SCROLL_NO_CLOSE));
 
 		//Pipeline layout
+
+		samplerNearest = {
+			g, NAME("Nearest sampler"),
+			Sampler::Info(
+				SamplerMin::NEAREST, SamplerMag::NEAREST,
+				SamplerMode::CLAMP_BORDER, 1
+			)
+		};
 
 		pipelineLayout = {
 
@@ -248,7 +299,9 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("Accumulation buffer"), 13, TextureType::TEXTURE_2D, 1, ShaderAccess::COMPUTE, GPUFormat::RGBA32f, true),
 				RegisterLayout(NAME("Reflection buffer"), 14, TextureType::TEXTURE_2D, 2, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true),
 				RegisterLayout(NAME("Shadow output"), 15, GPUBufferType::STRUCTURED, 11, ShaderAccess::COMPUTE, sizeof(u32)),
-				RegisterLayout(NAME("Shadow colors"), 16, GPUBufferType::STRUCTURED, 12, ShaderAccess::COMPUTE, sizeof(Vec2u32))
+				RegisterLayout(NAME("Shadow colors"), 16, GPUBufferType::STRUCTURED, 12, ShaderAccess::COMPUTE, sizeof(Vec2u32)),
+				RegisterLayout(NAME("HitBuffer"), 17, GPUBufferType::STRUCTURED, 13, ShaderAccess::COMPUTE, sizeof(Hit)),
+				RegisterLayout(NAME("UI"), 18, SamplerType::SAMPLER_MS, 0, ShaderAccess::COMPUTE)
 			)
 		};
 
@@ -381,6 +434,17 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		inspector.value = (GPUData*) raygenData->getBuffer();
+
+		inspector->eye = eye;
+		inspector->triCount = triCount;
+		inspector->sphereCount = sphereCount;
+		inspector->cubeCount = cubeCount;
+		inspector->planeCount = planeCount;
+		inspector->skyboxColor = { 0, 0.5f, 1 };
+		inspector->exposure = 1;
+		inspector->displayType = DisplayType::Default;
+
 		//Sphere y are inversed?
 
 		sphereData = {
@@ -404,7 +468,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Cube cubes[] = {
-			{ { -3, -3, -3 }, 0, { -2, -2, -2 }, 0 }
+			{ { -3, -3, -3 }, 0, { -2, -2, -2 }, 6 }
 		};
 
 		cubeData = {
@@ -436,7 +500,8 @@ struct RaytracingInterface : public ViewportInterface {
 			{ { 1, 0, 1 },	 0,	{ 0.05f, 0, 0.05f },	 1,		{ 0, 0, 0 }, 0, {}, 0 },
 			{ { 1, 1, 0 },	 0,	{ 0.05f, 0.05f, 0 },	 1,		{ 0, 0, 0 }, 0, {}, 0 },
 			{ { 0, 1, 1 },	 0,	{ 0, 0.05f, 0.05f },	 1,		{ 0, 0, 0 }, 0, {}, 0 },
-			{ { 0, 0, 0 },	 1,	{ 0, 0, 0 },			 0,		{ 0, 0, 0 }, 0, {}, 0 }
+			{ { 0, 0, 0 },	 1,	{ 0, 0, 0 },			 0,		{ 0, 0, 0 }, 0, {}, 0 },
+			{ { 0, 0, 0 },	 .25,{ 0, 0, 0 },			 .5,	{ 0, 0, 0 }, 0, {}, 0 }
 		};
 
 		materialData = {
@@ -569,35 +634,23 @@ struct RaytracingInterface : public ViewportInterface {
 		const f32 aspect = res.cast<Vec2f32>().aspect();
 		const f32 nearPlane = f32(std::tan(fov * 0.5_deg));
 
+		v = Mat4x4f32::lookDirection(-inspector->eye, eyeDir, { 0, 1, 0 });
+
 		const Vec4f32 p0 = v * Vec4f32(-aspect, 1, -nearPlane, 1);
 		const Vec4f32 p1 = v * Vec4f32(aspect, 1, -nearPlane, 1);
 		const Vec4f32 p2 = v * Vec4f32(-aspect, -1, -nearPlane, 1);
 
-		GPUData buffer {
+		inspector->p0 = p0.cast<Vec3f32>();
+		inspector->p1 = p1.cast<Vec3f32>();
+		inspector->p2 = p2.cast<Vec3f32>();
 
-			-eye, res.x,
+		inspector->randomX = r.range<f32>(-100, 100);
+		inspector->randomY = r.range<f32>(-100, 100);
 
-			p0.cast<Vec3f32>(), res.y,
-			p1.cast<Vec3f32>(), r.range<f32>(-100, 100),
-			p2.cast<Vec3f32>(), r.range<f32>(-100, 100),
+		++inspector->sampleCount;
 
-			{ 0, 0.5, 1 }, 2,
-			
-			Vec2f32(1.f / res.x, 1.f / res.y),
-
-			4,
-			128,
-
-			++sampleCount,
-			triCount,
-			sphereCount,
-			cubeCount,
-
-			planeCount
-		};
-
-		memcpy(raygenData->getBuffer(), &buffer, sizeof(buffer));
-		raygenData->flush(0, sizeof(buffer));
+		memcpy(raygenData->getBuffer(), inspector.value, sizeof(*inspector.value));
+		raygenData->flush(0, sizeof(*inspector.value));
 	}
 
 	//Update size of surfaces
@@ -606,6 +659,12 @@ struct RaytracingInterface : public ViewportInterface {
 
 		res = size;
 		sampleCount = 0;
+
+		inspector->width = size.x;
+		inspector->height = size.y;
+		inspector->invRes = Vec2f32(1.f / size.x, 1.f / size.y);
+
+		gui.resize(size);
 		
 		//Update compute target
 
@@ -684,6 +743,15 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		gbuffer.release();
+		gbuffer = {
+			g, NAME("HitBuffer"),
+			ShaderBuffer::Info(
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
+				{ { NAME("hitBuffer"), ShaderBuffer::Layout(0, sizeof(Hit) * size.prod()) } }
+			)
+		};
+
 		raytracingDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D });
 		raytracingDescriptors->updateDescriptor(6, { shadowRayData, 0 });
 		raytracingDescriptors->updateDescriptor(10, { positionBuffer, 0 });
@@ -692,7 +760,9 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->updateDescriptor(14, { reflectionBuffer, TextureType::TEXTURE_2D });
 		raytracingDescriptors->updateDescriptor(15, { shadowOutput, 0 });
 		raytracingDescriptors->updateDescriptor(16, { shadowColors, 0 });
-		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 }, { 13, 4 } });
+		raytracingDescriptors->updateDescriptor(17, { gbuffer, 0 });
+		raytracingDescriptors->updateDescriptor(18, { samplerNearest, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS });
+		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 }, { 13, 6 } });
 
 		swapchain->onResize(size);
 
@@ -738,7 +808,7 @@ struct RaytracingInterface : public ViewportInterface {
 			//Reflections
 
 			BindPipeline(reflectionPipeline),
-			DispatchIndirect(dispatchArgs, 1),
+			Dispatch(res.cast<Vec2u32>()),
 
 			//Do gamma and color correction
 
@@ -832,7 +902,7 @@ struct RaytracingInterface : public ViewportInterface {
 					Pipeline::Flag::NONE,
 					reflectionShader,
 					pipelineLayout,
-					Vec3u32{ THREADS, 1, 1 }
+					Vec3u32{ THREADS_X, THREADS_Y, 1 }
 				)
 			};
 		}
@@ -843,11 +913,16 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//Execute commandList
 
-	void render(const ViewportInfo*) final override {
-		g.present(raytracingOutput, 0, 0, swapchain, cl);
+	void render(const ViewportInfo *vi) final override {
+		gui.render(g, vi->offset, vi->monitors);
+		g.present(raytracingOutput, 0, 0, swapchain, gui.getCommands(), cl);
 	}
 
 	f64 time = 0;
+
+	bool isShift{}, isCtrl{};
+	Vec3f32 inputDir{};
+	f32 fovChangeDir{};
 
 	//Update eye
 	void update(const ViewportInfo* vi, f64 dt) final override {
@@ -857,7 +932,7 @@ struct RaytracingInterface : public ViewportInterface {
 			Vec4f32(0, 0, -5, 1),
 			Vec4f32(3, 0, 0, 1),
 			Vec4f32(0, -5, 0, 1),
-			Vec4f32(7, 0, 0, 1),
+			Vec4f32(7, f32(sin(time)), 0, 1),
 			Vec4f32(-5 + f32(sin(time)), f32(cos(time)), 0, 1),
 			Vec4f32(f32(sin(time)), 2 + f32(cos(time)), 0, 1)
 		};
@@ -876,33 +951,8 @@ struct RaytracingInterface : public ViewportInterface {
 
 		#endif
 
-		Vec3f32 d{};
-
-		bool isShift{}, isCtrl{};
-
 		for (auto* dvc : vi->devices)
-			if (dvc->isType(InputDevice::KEYBOARD)) {
-
-				if (dvc->isDown(Key::Key_w)) d += Vec3f32(0, 0, 1);
-				if (dvc->isDown(Key::Key_s)) d += Vec3f32(0, 0, -1);
-
-				if (dvc->isDown(Key::Key_q)) d += Vec3f32(0, -1, 0);
-				if (dvc->isDown(Key::Key_e)) d += Vec3f32(0, 1, 0);
-
-				if (dvc->isDown(Key::Key_d)) d += Vec3f32(-1, 0, 0);
-				if (dvc->isDown(Key::Key_a)) d += Vec3f32(1, 0, 0);
-
-				if (dvc->isDown(Key::Key_1)) fov = f32(std::max(fov - fovChangeSpeed * dt, 0.99999999));
-				if (dvc->isDown(Key::Key_2)) fov = f32(std::min(fov + fovChangeSpeed * dt, 149.99999999));
-
-				if (dvc->isDown(Key::Key_shift))
-					isShift = true;
-
-				if (dvc->isDown(Key::Key_ctrl))
-					isCtrl = true;
-
-			}
-			else if (dvc->isType(InputDevice::MOUSE)) {
+			if (dvc->isType(InputDevice::MOUSE)) {
 
 				f64 delta = dvc->getCurrentAxis(MouseAxis::Axis_wheel_y);
 
@@ -915,18 +965,18 @@ struct RaytracingInterface : public ViewportInterface {
 		else
 			time += dt * 0.05;
 
-		if (d.any()) {
+		fov = f32(oic::Math::clamp(fov - fovChangeSpeed * fovChangeDir * dt, 0.99999999, 149.99999999));
+
+		if (inputDir.any()) {
 
 			const f32 speedUp = isShift ? 10.f : 1.f;
 
-			d = d.clamp(-1, 1) * f32(dt * speed * speedUp);
+			Vec3f32 d = inputDir.clamp(-1, 1) * f32(dt * speed * speedUp);
 
 			if(d.any())
 				sampleCount = 0;
 
-			eye += (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
-
-			v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
+			inspector->eye -= (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
 		}
 
 		if (res.neq(0).all())
@@ -935,18 +985,30 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//Input
 
-	void onInputActivate(ViewportInfo *vp, const InputDevice *dev, InputHandle ih) final override {
-	
-		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::Button_left)
-			vp->hint = ViewportInfo::Hint(vp->hint | ViewportInfo::CAPTURE_CURSOR);
+	void onInputUpdate(ViewportInfo*, const InputDevice *dvc, InputHandle ih, bool isActive) final override {
 
-	}
+		isActive &= !gui.onInputUpdate(dvc, ih, isActive);
+			
+		if (!dynamic_cast<const Keyboard*>(dvc))
+			return;
 
-	void onInputDeactivate(ViewportInfo *vp, const InputDevice *dev, InputHandle ih) final override {
+		if (ih == Key::Key_w) inputDir.z = isActive;
+		if (ih == Key::Key_s) inputDir.z = -f32(isActive);
 
-		if (dev->isType(InputDevice::MOUSE) && ih == MouseButton::Button_left)
-			vp->hint = ViewportInfo::Hint(vp->hint & ~ViewportInfo::CAPTURE_CURSOR);
+		if (ih == Key::Key_q) inputDir.y = -f32(isActive);
+		if (ih == Key::Key_e) inputDir.y = isActive;
 
+		if (ih == Key::Key_d) inputDir.x = -f32(isActive);
+		if (ih == Key::Key_a) inputDir.x = isActive;
+
+		if (ih == Key::Key_1) fovChangeDir = -f32(isActive);
+		if (ih == Key::Key_2) fovChangeDir = isActive;
+
+		if (ih == Key::Key_shift)
+			isShift = isActive;
+
+		if (ih == Key::Key_ctrl)
+			isCtrl = isActive;
 	}
 };
 
