@@ -57,7 +57,7 @@ struct RaytracingInterface : public ViewportInterface {
 	UploadBufferRef uploadBuffer;
 
 	Vec2u32 res;
-	Vec3f32 eye{ 0, 0, 7 }, eyeDir = { 0, 0, -1 };
+	Vec3f32 eye{ 0, 0, -7 }, eyeDir = { 0, 0, -1 };
 	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
 
 	SamplerRef samplerNearest;
@@ -115,13 +115,16 @@ struct RaytracingInterface : public ViewportInterface {
 
 		InflectWithName(
 			{
-				"Eye x", "Eye y", "Eye z",
-				"Skybox color r",  "Skybox color g",  "Skybox color b",
-				"Exposure"
+				"Eye",
+				"Skybox color",
+				"Exposure",
+				"Test float",
+				"Display time"
 			},
-			eye.x, eye.y, eye.z,
-			skyboxColor.x, skyboxColor.y, skyboxColor.z,
+			eye,
+			skyboxColor,
 			exposure,
+			Vec3f32(1, 0, 0),
 			displayType
 		);
 
@@ -259,12 +262,21 @@ struct RaytracingInterface : public ViewportInterface {
 	//GPU data
 	PipelineLayoutRef pipelineLayout;
 
+	//
+
+	GPUData *gpuData{};
+
+	InflectWithName(
+		{ "GPUData", "FOV", "FOV Change speed", "Eye dir", "Move speed", "View matrix", "Reset accumulation samples" }, 
+		*gpuData, fov, fovChangeSpeed, eyeDir, speed, (const Mat4x4f32&) v
+	);
+
 	//UI
-	StructInspector<GPUData*> inspector;
+	StructInspector<RaytracingInterface*> inspector;
 
 	//Create resources
 
-	RaytracingInterface(Graphics& g) : g(g), gui(g) {
+	RaytracingInterface(Graphics& g) : g(g), gui(g), inspector(this) {
 
 		gui.addWindow(Window("", 0, {}, { 200, 350 }, &inspector, Window::DEFAULT_SCROLL_NO_CLOSE));
 
@@ -434,16 +446,16 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
-		inspector.value = (GPUData*) raygenData->getBuffer();
+		gpuData = (GPUData*) raygenData->getBuffer();
 
-		inspector->eye = eye;
-		inspector->triCount = triCount;
-		inspector->sphereCount = sphereCount;
-		inspector->cubeCount = cubeCount;
-		inspector->planeCount = planeCount;
-		inspector->skyboxColor = { 0, 0.5f, 1 };
-		inspector->exposure = 1;
-		inspector->displayType = DisplayType::Default;
+		gpuData->eye = eye;
+		gpuData->triCount = triCount;
+		gpuData->sphereCount = sphereCount;
+		gpuData->cubeCount = cubeCount;
+		gpuData->planeCount = planeCount;
+		gpuData->skyboxColor = { 0, 0.5f, 1 };
+		gpuData->exposure = 1;
+		gpuData->displayType = DisplayType::Default;
 
 		//Sphere y are inversed?
 
@@ -634,23 +646,23 @@ struct RaytracingInterface : public ViewportInterface {
 		const f32 aspect = res.cast<Vec2f32>().aspect();
 		const f32 nearPlane = f32(std::tan(fov * 0.5_deg));
 
-		v = Mat4x4f32::lookDirection(-inspector->eye, eyeDir, { 0, 1, 0 });
+		v = Mat4x4f32::lookDirection(-gpuData->eye, eyeDir, { 0, 1, 0 });
 
 		const Vec4f32 p0 = v * Vec4f32(-aspect, 1, -nearPlane, 1);
 		const Vec4f32 p1 = v * Vec4f32(aspect, 1, -nearPlane, 1);
 		const Vec4f32 p2 = v * Vec4f32(-aspect, -1, -nearPlane, 1);
 
-		inspector->p0 = p0.cast<Vec3f32>();
-		inspector->p1 = p1.cast<Vec3f32>();
-		inspector->p2 = p2.cast<Vec3f32>();
+		gpuData->p0 = p0.cast<Vec3f32>();
+		gpuData->p1 = p1.cast<Vec3f32>();
+		gpuData->p2 = p2.cast<Vec3f32>();
 
-		inspector->randomX = r.range<f32>(-100, 100);
-		inspector->randomY = r.range<f32>(-100, 100);
+		gpuData->randomX = r.range<f32>(-100, 100);
+		gpuData->randomY = r.range<f32>(-100, 100);
 
-		++inspector->sampleCount;
+		++gpuData->sampleCount;
 
-		memcpy(raygenData->getBuffer(), inspector.value, sizeof(*inspector.value));
-		raygenData->flush(0, sizeof(*inspector.value));
+		memcpy(raygenData->getBuffer(), gpuData, sizeof(*gpuData));
+		raygenData->flush(0, sizeof(*gpuData));
 	}
 
 	//Update size of surfaces
@@ -660,9 +672,9 @@ struct RaytracingInterface : public ViewportInterface {
 		res = size;
 		sampleCount = 0;
 
-		inspector->width = size.x;
-		inspector->height = size.y;
-		inspector->invRes = Vec2f32(1.f / size.x, 1.f / size.y);
+		gpuData->width = size.x;
+		gpuData->height = size.y;
+		gpuData->invRes = Vec2f32(1.f / size.x, 1.f / size.y);
 
 		gui.resize(size);
 		
@@ -956,7 +968,9 @@ struct RaytracingInterface : public ViewportInterface {
 
 				f64 delta = dvc->getCurrentAxis(MouseAxis::Axis_wheel_y);
 
-				if (delta)
+				//TODO: Mouse wheel seems to hang?
+
+				if (oic::Math::abs(delta) > 0.02)
 					speed = oic::Math::clamp(speed * 1 + (delta / 1024), 0.5, 5.0);
 			}
 
@@ -976,7 +990,7 @@ struct RaytracingInterface : public ViewportInterface {
 			if(d.any())
 				sampleCount = 0;
 
-			inspector->eye -= (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
+			gpuData->eye -= (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
 		}
 
 		if (res.neq(0).all())
