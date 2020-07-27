@@ -187,19 +187,19 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit) {
 
 	if(tmin == mi.x) {
 		int isLeft = int(mi.x == startDir.x);
-		hit.normal = vec3(isLeft * -2 + 1, 0, 0);
+		hit.normal = vec3(isLeft * 2 - 1, 0, 0);
 		hit.intersection = pos.yz + vec2(isLeft * 3 + 2, 0) + 2;
 	}
 
 	else if(tmin == mi.y) {
 		int isDown = int(mi.y == startDir.y);
-		hit.normal = vec3(0, isDown * -2 + 1, 0);
+		hit.normal = vec3(0, isDown * 2 - 1, 0);
 		hit.intersection = pos.xz + vec2(isDown + 3, 0) + 2;
 	}
 
 	else {
 		int isBack = int(mi.z == startDir.z);
-		hit.normal = vec3(0, 0, isBack * -2 + 1);
+		hit.normal = vec3(0, 0, isBack * 2 - 1);
 		hit.intersection = pos.xy + vec2(isBack * 5 + 1, 0) + 2;
 	}
 

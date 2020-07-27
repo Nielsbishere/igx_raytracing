@@ -17,6 +17,15 @@ const uint
 	DisplayType_Object = 10,
 	DisplayType_Intersection_side = 11;
 
+const uint 
+	ProjectionType_Default = 0, 
+	ProjectionType_Omnidirectional = 1,
+	ProjectionType_Equirect = 2,
+	ProjectionType_Stereoscopic_omnidirectional_TB = 3,
+	ProjectionType_Stereoscopic_TB = 4,
+	ProjectionType_Stereoscopic_omnidirectional_LR = 5,
+	ProjectionType_Stereoscopic_LR = 6;
+
 layout(binding=0, std140) uniform GPUData {
 
 	vec3 eye;
@@ -45,6 +54,10 @@ layout(binding=0, std140) uniform GPUData {
 
 	uint planeCount;
 	uint displayType;
+	uint projectionType;
+	float ipd;
+
+	uint disableUI;
 
 };
 
@@ -74,8 +87,7 @@ Hit traceGeometry(const Ray ray) {
 	hit.material = hit.object = 0;
 	hit.normal = vec3(0);
 
-	//TODO: Only get normal of one object
-	//TODO: Spheres and tris are upside down
+	//TODO: Only get normal and uv of one object
 
 	uint j = 0;
 
@@ -175,12 +187,39 @@ bool traceOcclusion(const Ray ray, const float maxDist) {
 
 //Setting up primaries
 
-Ray calculatePrimary(const uvec2 loc) {
+const float pi = 3.1415927410125732421875;
 
-	//Calculate center pixel, jittered for AA
+Ray calculateOmni(const vec2 centerPixel, bool isLeft) {
 
-	const vec2 centerPixel = (vec2(loc) + rand(loc + vec2(randomX, randomY))) * invRes;
-	
+	const vec2 spherical = vec2(centerPixel.x - 0.5, 0.5 - centerPixel.y) * vec2(2 * pi, pi);
+
+	const vec2 sins = sin(spherical), coss = cos(spherical);
+
+	//TODO: Should be facing the camera's eyeDir
+
+	//Convert ipd to ipdInMeters / 2, to get two eyes sitting apart with ipd
+
+	const vec3 pos = eye + vec3(coss.x, 0, sins.x) * (ipd * 5e-4) * (isLeft ? - 1 : 1);	
+	const vec3 dir = vec3(sins.x * coss.y, sins.y, -coss.x * coss.y);
+
+	return Ray(pos, 0, dir, 0);
+}
+
+Ray calculateEquirect(const vec2 centerPixel) {
+
+	//TODO: Should be facing the camera's eyeDir
+
+	const vec2 spherical = centerPixel * vec2(2 * pi, pi);
+
+	const vec2 sins = sin(spherical), coss = cos(spherical);
+
+	const vec3 dir = vec3(coss.y * sins.x, sins.y * sins.x, coss.x);
+
+	return Ray(eye, 0, dir, 0);
+}
+
+Ray calculateScreen(const vec2 centerPixel) {
+
 	const vec3 right = p1 - p0;
 	const vec3 up = p2 - p0;
 
@@ -188,4 +227,33 @@ Ray calculatePrimary(const uvec2 loc) {
 	const vec3 dir = normalize(pos - eye);
 
 	return Ray(pos, 0, dir, 0);
+}
+
+Ray calculateOmniStereoTB(const vec2 centerPixel) {
+	return calculateOmni(vec2(centerPixel.x, fract(centerPixel.y * 2)), centerPixel.y < 0.5);
+}
+
+Ray calculateOmniStereoLR(const vec2 centerPixel) {
+	return calculateOmni(vec2(fract(centerPixel.x * 2), centerPixel.y), centerPixel.x < 0.5);
+}
+
+Ray calculatePrimary(const uvec2 loc) {
+
+	vec2 centerPixel = (vec2(loc) + rand(loc + vec2(randomX, randomY))) * invRes;
+	centerPixel.y = 1 - centerPixel.y;
+
+	//Don't use a switch case or if statement, or nvidia drivers will give unexplained behavior
+
+	return 
+		projectionType == ProjectionType_Default ? calculateScreen(centerPixel) : 
+		(
+			projectionType == ProjectionType_Omnidirectional ? calculateOmni(centerPixel, false) : 
+			(
+				projectionType == ProjectionType_Stereoscopic_omnidirectional_TB ? calculateOmniStereoTB(centerPixel) :
+				(
+					projectionType == ProjectionType_Stereoscopic_omnidirectional_LR ? calculateOmniStereoLR(centerPixel) :
+					calculateEquirect(centerPixel)
+				)
+			)
+		);
 }

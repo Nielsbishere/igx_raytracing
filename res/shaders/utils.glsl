@@ -1,6 +1,4 @@
 
-const float pi = 3.1415926535;
-
 //Sample point on equirectangular texture
 
 const vec2 invAtan = vec2(0.1591, 0.3183);

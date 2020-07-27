@@ -14,6 +14,7 @@
 #include "utils/math.hpp"
 #include "utils/random.hpp"
 #include "utils/inflect.hpp"
+#include "igxi/convert.hpp"
 
 #define uint u32
 #include "../res/shaders/defines.glsl"
@@ -31,6 +32,17 @@ oicExposedEnum(
 	Light_buffer, Reflection_buffer, No_secondaries,
 	UI_Only, Material, Object,
 	Intersection_side
+);
+
+oicExposedEnum(
+	ProjectionType, u32, 
+	Default, 
+	Omnidirectional,
+	Equirect,
+	Stereoscopic_omnidirectional_TB,
+	Stereoscopic_TB,
+	Stereoscopic_omnidirectional_LR,
+	Stereoscopic_LR
 );
 
 struct RaytracingInterface : public ViewportInterface {
@@ -57,15 +69,13 @@ struct RaytracingInterface : public ViewportInterface {
 	UploadBufferRef uploadBuffer;
 
 	Vec2u32 res;
-	Vec3f32 eye{ 0, 0, -7 }, eyeDir = { 0, 0, -1 };
+	Vec3f32 eye{ 4, 2, -2 }, eyeDir = { 0, 0, -1 };
 	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
 
 	SamplerRef samplerNearest;
 
 	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = 70;
-
-	u32 sampleCount{};
 
 	static constexpr usz sphereCount = 7;
 	static constexpr usz triCount = 3;
@@ -112,20 +122,27 @@ struct RaytracingInterface : public ViewportInterface {
 
 		u32 planeCount;
 		DisplayType displayType;
+		ProjectionType projectionType;
+		f32 ipd;
+
+		bool disableUI;
+		u8 padding[3];
 
 		InflectWithName(
 			{
 				"Eye",
 				"Skybox color",
 				"Exposure",
-				"Test float",
-				"Display time"
+				"Display time",
+				"Projection type",
+				"Interpupillary distance (mm)"
 			},
 			eye,
 			skyboxColor,
 			exposure,
-			Vec3f32(1, 0, 0),
-			displayType
+			displayType,
+			projectionType,
+			ipd
 		);
 
 	};
@@ -266,9 +283,39 @@ struct RaytracingInterface : public ViewportInterface {
 
 	GPUData *gpuData{};
 
+	Vec2u16 targetSize = { 3840, 2160 }, targetSamples = 8;
+	bool shouldOutputNextFrame{};
+	bool isResizeRequested{};
+
+	String targetOutput = "./output/0";
+
+	void outputNextFrame() const {
+		(bool&) shouldOutputNextFrame = true;
+	}
+
+	void resetSamples() const {
+		(u32&) gpuData->sampleCount = 0;
+	}
+
 	InflectWithName(
-		{ "GPUData", "FOV", "FOV Change speed", "Eye dir", "Move speed", "View matrix", "Reset accumulation samples" }, 
-		*gpuData, fov, fovChangeSpeed, eyeDir, speed, (const Mat4x4f32&) v
+		{ 
+			"", 
+			"FOV", "FOV Change speed", 
+			"Eye dir", "Move speed", 
+			"View matrix",
+			"Target size", "Target samples",
+			"Target output path (relative to ./)",
+			"Output next frame",
+			"Reset accumulation samples"
+		}, 
+		*gpuData, 
+		fov, fovChangeSpeed, 
+		eyeDir, speed, 
+		(const Mat4x4f32&) v,
+		targetSize, targetSamples,
+		targetOutput,
+		Button<RaytracingInterface, &RaytracingInterface::outputNextFrame>{},
+		Button<RaytracingInterface, &RaytracingInterface::resetSamples>{}
 	);
 
 	//UI
@@ -295,7 +342,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Raytracing pipeline layout"),
 
 			PipelineLayout::Info(
-				RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true),
+				RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, GPUFormat::RGBA8, true),
 				RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
 				RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
 				RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
@@ -441,7 +488,7 @@ struct RaytracingInterface : public ViewportInterface {
 		raygenData = {
 			g, NAME("Raygen uniform buffer"),
 			ShaderBuffer::Info(
-				GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_ACCESS,
+				GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE,
 				{ { NAME("mask"), ShaderBuffer::Layout(0, Buffer(sizeof(GPUData))) } }
 			)
 		};
@@ -455,20 +502,20 @@ struct RaytracingInterface : public ViewportInterface {
 		gpuData->planeCount = planeCount;
 		gpuData->skyboxColor = { 0, 0.5f, 1 };
 		gpuData->exposure = 1;
-		gpuData->displayType = DisplayType::Default;
+		gpuData->ipd = 6.2f;
 
 		//Sphere y are inversed?
 
 		sphereData = {
 			g, NAME("Sphere data"),
 			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::CPU_ACCESS,
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::CPU_WRITE,
 				{ { NAME("spheres"), ShaderBuffer::Layout(0, sphereCount * sizeof(Vec4f32)) } }
 			)
 		};
 
 		Vec4f32 planes[] = {
-			Vec4f32(0, 1, 0, -3)
+			Vec4f32(0, -1, 0, 0)
 		};
 
 		planeData = {
@@ -480,7 +527,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Cube cubes[] = {
-			{ { -3, -3, -3 }, 0, { -2, -2, -2 }, 6 }
+			{ { 0, 0, 0 }, 0, { 1, 1, 1 }, 6 }
 		};
 
 		cubeData = {
@@ -492,7 +539,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Triangle triangles[] = {
-			{ Vec3f32(1, 1, 0), 0, Vec3f32(-1, 1, 0), 0, Vec3f32(1, -1, 1), 0 },
+			{ Vec3f32(1, 1, 0), 0, Vec3f32(-1, 1, 0), 0, Vec3f32(1, 0, 1), 0 },
 			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 1), 0 },
 			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 1), 0 }
 		};
@@ -525,9 +572,9 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Light lights[] = {
-			{ { 0, 0, 0 }, 0, { 0, 1, 0 }, 0, { 0.4f, 0.2f, 0.4f }, 0 },
-			{ { 0, 0, 0 }, 5, { 0, 0, 0 }, 1, { 1.5f, 1.5f, 1.5f }, 0 },
-			{ { -2, -2, -2 }, 7, { 0, 0, 0 }, 1, { 0.7f, 0.5f, 1.5f }, 0 }
+			{ { 0, 0, 0 }, 0, { 0, -1, 0 }, 0, { 0.4f, 0.2f, 0.4f }, 0 },
+			{ { 0, 0.1f, 0 }, 5, { 0, 0, 0 }, 1, { 1.5f, 1.5f, 1.5f }, 0 },
+			{ { 2, 2, 2 }, 7, { 0, 0, 0 }, 1, { 0.7f, 0.5f, 1.5f }, 0 }
 		};
 
 		lightData = {
@@ -656,6 +703,8 @@ struct RaytracingInterface : public ViewportInterface {
 		gpuData->p1 = p1.cast<Vec3f32>();
 		gpuData->p2 = p2.cast<Vec3f32>();
 
+		//TODO: This should be a setup shader or something, so we can run it multiple times
+
 		gpuData->randomX = r.range<f32>(-100, 100);
 		gpuData->randomY = r.range<f32>(-100, 100);
 
@@ -669,8 +718,10 @@ struct RaytracingInterface : public ViewportInterface {
 
 	void resize(const ViewportInfo*, const Vec2u32& size) final override {
 
+		g.wait();					//Ensure we don't have any work pending
+
 		res = size;
-		sampleCount = 0;
+		gpuData->sampleCount = 0;
 
 		gpuData->width = size.x;
 		gpuData->height = size.y;
@@ -685,7 +736,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Raytracing output"),
 			Texture::Info(
 				size.cast<Vec2u16>(), 
-				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE_ONLY, 
+				GPUFormat::RGBA8, GPUMemoryUsage::GPU_WRITE_ONLY, 
 				1, 1
 			)
 		};
@@ -776,7 +827,8 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->updateDescriptor(18, { samplerNearest, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS });
 		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 }, { 13, 6 } });
 
-		swapchain->onResize(size);
+		if(!isResizeRequested)
+			swapchain->onResize(size);
 
 		fillCommandList();
 	}
@@ -925,7 +977,65 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//Execute commandList
 
+	void onRenderFinish(UploadBuffer *result, const Pair<u64, u64> &allocation, TextureObject *image, const Vec3u16&, const Vec3u16 &dim, u16, u8, bool) {
+
+		//Convert to IGXI representation
+
+		igxi::IGXI igxi{};
+
+		igxi.header.width = dim.x;
+		igxi.header.height = dim.y;
+		igxi.header.length = dim.z;
+		igxi.header.layers = igxi.header.mips = igxi.header.formats = 1;
+
+		igxi.header.flags = igxi::IGXI::Flags::CONTAINS_DATA;
+		igxi.header.type = TextureType::TEXTURE_2D;
+
+		igxi.format.push_back(image->getInfo().format);
+		igxi.data.push_back({ result->readback(allocation, image->size()) });
+
+		igxi::Helper::toDiskExternalFormat(igxi, targetOutput);
+	}
+
 	void render(const ViewportInfo *vi) final override {
+
+		if (shouldOutputNextFrame) {
+
+			//Setup render
+
+			isResizeRequested = true;
+			resize(vi, targetSize.cast<Vec2u32>());
+
+			gpuData->sampleCount = 0;
+
+			bool disableUI = gpuData->disableUI;
+			gpuData->disableUI = true;
+
+			UploadBufferRef cpuOutput {
+				g, "Frame output",
+				UploadBuffer::Info(
+					raytracingOutput->size(), 0, 0
+				)
+			};
+
+			g.presentToCpu<RaytracingInterface, &RaytracingInterface::onRenderFinish>(
+				{ cl }, raytracingOutput, cpuOutput, this
+			);
+
+			//Reset to old state and wait for work to finish
+
+			Vec2u16 actualSize = swapchain->getInfo().size;
+			resize(vi, Vec2u32(actualSize.x, actualSize.y));
+
+			gpuData->disableUI = disableUI;
+
+			isResizeRequested = false;
+			shouldOutputNextFrame = false;
+			gpuData->sampleCount = 0;
+		}
+
+		//Regular render
+
 		gui.render(g, vi->offset, vi->monitors);
 		g.present(raytracingOutput, 0, 0, swapchain, gui.getCommands(), cl);
 	}
@@ -940,13 +1050,13 @@ struct RaytracingInterface : public ViewportInterface {
 	void update(const ViewportInfo* vi, f64 dt) final override {
 
 		Vec4f32 spheres[sphereCount] = {
-			Vec4f32(0, 0, 5, 1),
-			Vec4f32(0, 0, -5, 1),
-			Vec4f32(3, 0, 0, 1),
-			Vec4f32(0, -5, 0, 1),
-			Vec4f32(7, f32(sin(time)), 0, 1),
-			Vec4f32(-5 + f32(sin(time)), f32(cos(time)), 0, 1),
-			Vec4f32(f32(sin(time)), 2 + f32(cos(time)), 0, 1)
+			Vec4f32(0, 1, 5, 1),
+			Vec4f32(0, 1, -5, 1),
+			Vec4f32(3, 1, 0, 1),
+			Vec4f32(0, 6, 0, 1),
+			Vec4f32(7, 2 + f32(sin(time)), 0, 1),
+			Vec4f32(-5 + f32(sin(time)), 2 + f32(cos(time)), 0, 1),
+			Vec4f32(f32(sin(time)), 3 + f32(cos(time)), 0, 1)
 		};
 
 		std::memcpy(sphereData->getBuffer(), spheres, sizeof(spheres));
@@ -988,7 +1098,7 @@ struct RaytracingInterface : public ViewportInterface {
 			Vec3f32 d = inputDir.clamp(-1, 1) * f32(dt * speed * speedUp);
 
 			if(d.any())
-				sampleCount = 0;
+				gpuData->sampleCount = 0;
 
 			gpuData->eye -= (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
 		}
@@ -1006,11 +1116,11 @@ struct RaytracingInterface : public ViewportInterface {
 		if (!dynamic_cast<const Keyboard*>(dvc))
 			return;
 
-		if (ih == Key::Key_w) inputDir.z = isActive;
 		if (ih == Key::Key_s) inputDir.z = -f32(isActive);
+		if (ih == Key::Key_w) inputDir.z = isActive;
 
-		if (ih == Key::Key_q) inputDir.y = -f32(isActive);
-		if (ih == Key::Key_e) inputDir.y = isActive;
+		if (ih == Key::Key_e) inputDir.y = -f32(isActive);
+		if (ih == Key::Key_q) inputDir.y = isActive;
 
 		if (ih == Key::Key_d) inputDir.x = -f32(isActive);
 		if (ih == Key::Key_a) inputDir.x = isActive;

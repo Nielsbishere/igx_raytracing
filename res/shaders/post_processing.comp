@@ -4,7 +4,7 @@
 #include "trace.glsl"
 #include "light.glsl"
 
-layout(binding=0, outputFormat) uniform image2D rayOutput;
+layout(binding=0, rgba8) uniform image2D rayOutput;
 layout(binding=1, rgba32f) uniform image2D accumulationBuffer;
 layout(binding=2, outputFormat) uniform image2D reflectionOutput;
 layout(binding=0) uniform sampler2DMS ui;
@@ -128,7 +128,7 @@ void main() {
 		}
 
 		case DisplayType_Intersection_attributes:
-			color = vec3(hit.intersection.xy - (floor(hit.intersection.x) - 2), 0);
+			color = vec3(mod(hit.intersection, 2), 0);
 			break;
 
 		case DisplayType_Normals:
@@ -185,7 +185,7 @@ void main() {
 
 	//Exposure mapping
 
-	if(any(isnan(color)))				//TODO: Why is diffuse NaN? invalid data in rayOutput or shadowRays?
+	if(any(isnan(color)))				//TODO: Why is diffuse NaN? invalid shadeHit
 		color = vec3(0, 0, 10000);
 
 	color = vec3(1, 1, 1) - exp(-color * exposure);
@@ -196,14 +196,18 @@ void main() {
 
 	ivec2 sampleLoc = ivec2(loc.x, height - loc.y);
 
-	vec4 uiColor = toRGB(texelFetch(ui, sampleLoc, 0));
+	if(disableUI == 0) {
 
-	for(int i = 1; i < sampleCount; ++i)
-		uiColor += toRGB(texelFetch(ui, sampleLoc, i));
+		vec4 uiColor = toRGB(texelFetch(ui, sampleLoc, 0));
 
-	uiColor /= sampleCount;
+		for(int i = 1; i < sampleCount; ++i)
+			uiColor += toRGB(texelFetch(ui, sampleLoc, i));
 
-	color = mix(color, uiColor.rgb, float(uiColor.a != 0));
+		uiColor /= sampleCount;
+
+		color = mix(color, uiColor.rgb, float(uiColor.a != 0));
+
+	}
 
 	//Store
 	
