@@ -1,7 +1,7 @@
 
 const float noHit = 3.4028235e38;
-const float epsilon = 1e-2;		//epsilon for offsets
-const float delta = 1e-1;		//epsilon for calculations
+const float epsilon = 1e-4;		//epsilon for offsets
+const float delta = 1e-3;		//epsilon for calculations
 
 const uint shadowHit = 0xFFFFFFFF;		//loc1D is set to this when a shadow hit
 const uint noRayHit = 0xFFFFFFFF;		//loc1D is set to this when a primary didn't hit
