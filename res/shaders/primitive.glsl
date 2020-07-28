@@ -70,7 +70,7 @@ struct Hit {
 
 //Ray intersections
 
-bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit) {
+bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint obj, uint prevObj) {
 
 	const vec3 dif = sphere.xyz - r.pos;
 	const float t = dot(dif, r.dir);
@@ -81,7 +81,7 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit) {
 	const bool outOfSphere = Q2 > sphere.w;
 	const float hitT = t - sqrt(sphere.w - Q2);
 
-	if(!outOfSphere && hitT >= 0 && hitT < hit.hitT) {
+	if(!outOfSphere && obj != prevObj && hitT >= 0 && hitT < hit.hitT) {
 
 		hit.hitT = hitT;
 
@@ -104,7 +104,7 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit) {
 	return false;
 }
 
-bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit) {
+bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint obj, uint prevObj) {
 
 	vec3 dir = normalize(plane.xyz);
 	float dif = dot(r.dir, dir);
@@ -113,7 +113,7 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit) {
 
 	float hitT = -(dot(r.pos, dir) + plane.w) / dif;
 
-	if(hitT >= delta && hitT < hit.hitT) {
+	if(hitT >= delta && obj != prevObj && hitT < hit.hitT) {
 
 		hit.hitT = hitT;
 		hit.normal = dif < 0 ? -dir : dir;
@@ -131,7 +131,7 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit) {
 	return false;
 }
 
-bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit) {
+bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint obj, uint prevObj) {
 
 	//TODO: Triangles act weird >:(
 
@@ -156,14 +156,14 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit) {
 	
 	const float t = f * dot(p2_p0, q);
 	
-	if (t <= delta || t >= 1 / delta || t >= hit.hitT) return false;
+	if (t <= delta || obj == prevObj || t >= 1 / delta || t >= hit.hitT) return false;
 
 	hit.intersection = vec2(u + (int(sign(a)) << 1), v) + 2;
 	hit.hitT = t;
 	return true;
 }
 
-bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit) {
+bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint obj, uint prevObj) {
 
 	vec3 revDir = 1 / r.dir;
 
@@ -176,7 +176,7 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit) {
 	float tmin = max(max(mi.x, mi.y), mi.z);
 	float tmax = min(min(ma.x, ma.y), ma.z);
 
-	if(tmax < 0 || tmin > tmax || tmin > hit.hitT)
+	if(tmax < 0 || tmin > tmax || tmin > hit.hitT || obj == prevObj)
 		return false;
 
 	//Determine which plane it's on (of the x, y or z plane)

@@ -40,11 +40,11 @@ void main() {
 		return;
 
 	const uint loc1D = loc.x + loc.y * width;
-	Hit h = hitBuffer[loc1D];
+	Hit primHit = hitBuffer[loc1D];
 
 	const Ray prim = calculatePrimary(loc);
 
-	const vec3 hitPos = prim.pos + prim.dir * h.hitT;
+	const vec3 hitPos = prim.pos + prim.dir * primHit.hitT;
 
 	//Shoot rays for this warp
 
@@ -54,11 +54,11 @@ void main() {
 	vec3 l = getDirToLight(lights[lightId], hitPos, brightness, maxDist);
 	
 	const Ray ray = Ray(
-		hitPos + h.normal * epsilon, 0,
+		hitPos + primHit.normal * epsilon, 0,
 		-l, 0
 	);
 
-	uint64_t hitRays = ballotARB(h.hitT == noHit ? false : traceOcclusion(ray, maxDist));
+	uint64_t hitRays = ballotARB(primHit.hitT == noHit ? false : traceOcclusion(ray, maxDist, primHit.object));
 
 	//Store rays for the first thread in this warp
 	//Assume 32 (NV) or 64 (AMD)

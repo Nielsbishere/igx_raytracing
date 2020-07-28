@@ -89,7 +89,7 @@ layout(binding=10, std140) readonly buffer Cubes {
 
 //Intersections for colors
 
-Hit traceGeometry(const Ray ray) {
+Hit traceGeometry(const Ray ray, uint prevHit) {
 
 	Hit hit;
 	hit.hitT = noHit;
@@ -103,15 +103,11 @@ Hit traceGeometry(const Ray ray) {
 
 	#ifdef ALLOW_SPHERES
 
-	for(int i = 0; i < sphereCount; ++i) {
-
-		const vec4 sphere = spheres[i];
-
-		if(rayIntersectSphere(ray, sphere, hit)) {
+	for(int i = 0; i < sphereCount; ++i)
+		if(rayIntersectSphere(ray, spheres[i], hit, i, prevHit)) {
 			hit.object = i;
 			hit.material = i;
 		}
-	}
 
 	j += sphereCount;
 
@@ -120,7 +116,7 @@ Hit traceGeometry(const Ray ray) {
 	#ifdef ALLOW_PLANES
 
 	for(int i = 0; i < planeCount; ++i)
-		if(rayIntersectPlane(ray, planes[i], hit)) {
+		if(rayIntersectPlane(ray, planes[i], hit, i + j, prevHit)) {
 			hit.material = i;
 			hit.object = i + j;
 		}
@@ -132,7 +128,7 @@ Hit traceGeometry(const Ray ray) {
 	#ifdef ALLOW_TRIANGLES
 
 	for(int i = 0; i < triangleCount; ++i) {
-		if(rayIntersectTri(ray, triangles[i], hit)) {
+		if(rayIntersectTri(ray, triangles[i], hit, i + j, prevHit)) {
 			hit.material = triangles[i].material;
 			hit.object = i + j;
 			hit.normal = normalize(cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0));
@@ -146,7 +142,7 @@ Hit traceGeometry(const Ray ray) {
 	#ifdef ALLOW_CUBES
 
 	for(int i = 0; i < cubeCount; ++i) {
-		if(rayIntersectCube(ray, cubes[i], hit)) {
+		if(rayIntersectCube(ray, cubes[i], hit, i + j, prevHit)) {
 			hit.material = cubes[i].material;
 			hit.object = i + j;
 		}
@@ -159,36 +155,44 @@ Hit traceGeometry(const Ray ray) {
 
 //Optimized intersections for shadows
 
-bool traceOcclusion(const Ray ray, const float maxDist) {
+bool traceOcclusion(const Ray ray, const float maxDist, uint prevHit) {
 
 	Hit hit;
 	hit.hitT = noHit;
 
+	uint j = 0;
+
 	#ifdef ALLOW_SPHERES
 
-	for(int i = 0; i < spheres.length(); ++i)
-		rayIntersectSphere(ray, spheres[i], hit);
+	for(int i = 0; i < sphereCount; ++i)
+		rayIntersectSphere(ray, spheres[i], hit, i, prevHit);
+
+	j += sphereCount;
 
 	#endif
 
 	#ifdef ALLOW_PLANES
 
-	for(int i = 0; i < planes.length(); ++i)
-		rayIntersectPlane(ray, planes[i], hit);
+	for(int i = 0; i < planeCount; ++i)
+		rayIntersectPlane(ray, planes[i], hit, j + i, prevHit);
+
+	j += planeCount;
 
 	#endif
 
 	#ifdef ALLOW_TRIANGLES
 
-	for(int i = 0; i < triangles.length(); ++i)
-		rayIntersectTri(ray, triangles[i], hit);
+	for(int i = 0; i < triangleCount; ++i)
+		rayIntersectTri(ray, triangles[i], hit, j + i, prevHit);
+
+	j += triangleCount;
 
 	#endif
 
 	#ifdef ALLOW_CUBES
 
-	for(int i = 0; i < cubes.length(); ++i)
-		rayIntersectCube(ray, cubes[i], hit);
+	for(int i = 0; i < cubeCount; ++i)
+		rayIntersectCube(ray, cubes[i], hit, j + i, prevHit);
 
 	#endif
 

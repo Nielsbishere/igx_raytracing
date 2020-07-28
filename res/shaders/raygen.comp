@@ -1,6 +1,5 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
-#extension GL_ARB_gpu_shader_int64 : require
 #include "defines.glsl"
 #include "trace.glsl"
 
@@ -25,5 +24,5 @@ void main() {
 	//TODO: Perhaps do an intersect per tile (4 planes)
 	//		then intersect that geometry; not all spheres
 
-	hitBuffer[loc1D] = traceGeometry(ray);
+	hitBuffer[loc1D] = traceGeometry(ray, noRayHit);
 }

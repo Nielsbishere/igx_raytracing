@@ -51,7 +51,7 @@ void main() {
 		refl, 0
 	);
 	
-	Hit hit = traceGeometry(ray);
+	Hit hit = traceGeometry(ray, primHit.object);
 	vec3 col = shadeHit(ray, hit, skyboxColor, skyboxColor);
 
 	switch(displayType) {

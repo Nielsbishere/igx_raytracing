@@ -196,11 +196,6 @@ vec3 shadeHit(Ray ray, Hit hit, vec3 reflection, vec3 missColor) {
 	return shade(materials[hit.material], position, hit.normal, v, NdotV, reflection);
 }
 
-vec3 shadeRay(Ray ray, vec3 reflection, vec3 missColor) {
-	Hit hit = traceGeometry(ray);
-	return shadeHit(ray, hit, reflection, missColor);
-}
-
 uint indexToLight(uvec2 loc, uvec2 res, uint lightId, uvec2 shift, uvec2 mask) {
 
 	const uvec2 tile = loc >> shift;
