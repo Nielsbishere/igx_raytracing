@@ -1,67 +1,22 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_gpu_shader_int64 : require
+#extension GL_ARB_shader_ballot : require
 #include "defines.glsl"
-#include "trace.glsl"
-#include "light.glsl"
+#include "light_rt.glsl"
 
 layout(binding=0, rgba8) uniform image2D rayOutput;
 layout(binding=1, rgba32f) uniform image2D accumulationBuffer;
-layout(binding=2, outputFormat) uniform image2D reflectionOutput;
+layout(binding=2, outputFormat) readonly uniform image2D reflectionOutput;
 layout(binding=0) uniform sampler2DMS ui;
-
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-struct Position { vec3 pos; uint shadowStart; };
-
-layout(binding=8, std140) readonly buffer PositionBuffer {
-	Position positions[];
-};
-
-layout(binding=5, std140) readonly buffer Counters {
-	uint shadowCounter;
-	uint reflrectionCounter;
-};
 
 layout(binding=13, std140) readonly buffer HitBuffer {
 	Hit hitBuffer[];
 };
 
-layout(binding=11, std140) readonly buffer ShadowOutput {
-	uint shadowOutput[];
-};
+//Handling shading, etc.
 
-layout(binding=12, std140) readonly buffer ShadowColors {
-	uvec2 shadowColors[];
-};
-
-float isShadowed(uint id) {
-	return float((shadowOutput[id >> 5] & (1 << id)) == 0);
-}
-
-vec4 tosRGB(vec4 rgb) {
-
-	const vec4 rgb2 = rgb * rgb;
-
-	return 
-			0.012522878 * rgb +
-            0.682171111 * rgb2 +
-            0.305306011 * rgb2 * rgb;
-}
-
-vec4 toRGB(vec4 srgb) {
-
-	vec4 s1 = sqrt(srgb);
-	vec4 s2 = sqrt(s1);
-	vec4 s4 = sqrt(s2);
-
-	return
-		0.662002687 * s1 + 
-		0.684122060 * s2 - 
-		0.323583601 * s4 - 
-		0.0225411470 * srgb;
-}
-
-//Handling intersection
+layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
 
 void main() {
 
@@ -71,30 +26,7 @@ void main() {
 
 	if(loc.x >= width || loc.y >= height) return;
 
-	//Store
-	/*
-
-	vec3 diffuse = imageLoad(rayOutput, loc).rgb;
-	diffuse += imageLoad(reflectionOutput, loc).rgb;
-
-	const uint loc1D = loc.x + loc.y * width;
-	const uint shadowStart = positions[loc1D].shadowStart;
-
-	if(shadowStart != noRayHit)
-		for(uint i = 0; i < lights.length(); ++i) {
-
-			uint rayId = shadowStart + i;
-
-			uvec2 col16 = shadowColors[rayId];
-			vec3 col = vec3(unpackHalf2x16(col16.x), unpackHalf2x16(col16.y).x);
-
-			diffuse += col * isShadowed(rayId);
-		}
-
-	//Increment accumulationBuffer
-	*/
-
-	//vec3 color = imageLoad(reflectionOutput, loc).rgb;
+	const uvec2 uloc = ivec2(gl_GlobalInvocationID.xy);
 	
 	//Calculate hit
 
@@ -102,6 +34,7 @@ void main() {
 	const Ray prim = calculatePrimary(loc);
 
 	const Hit hit = hitBuffer[loc1D];
+	const vec3 hitPos = hit.hitT * prim.dir + prim.pos;
 
 	vec3 color;
 
@@ -109,14 +42,14 @@ void main() {
 
 		case DisplayType_Default: {
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
-			color = shadeHit(prim, hit, reflectionColor, skyboxColor);
+			color = shadeHitRT(prim, hit, reflectionColor, skyboxColor, uloc);
 			break;
 		}
 
 		case DisplayType_Accumulation: {
 
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
-			color = shadeHit(prim, hit, reflectionColor, skyboxColor);
+			color = shadeHitRT(prim, hit, reflectionColor, skyboxColor, uloc);
 		
 			if(sampleCount > 1)
 				color += imageLoad(accumulationBuffer, loc).rgb;
@@ -140,25 +73,32 @@ void main() {
 			break;
 
 		case DisplayType_Light_buffer: {
+		
+			const Material m = materials[hit.material];
+			const vec3 F0 = mix(vec3(0.04), m.albedo, m.metallic);
 
-			const uint loc1D = loc.x + loc.y * width;
-			const uint shadowStart = positions[loc1D].shadowStart;
-		
-			if(shadowStart != noRayHit)
-				for(uint i = 0; i < lights.length(); ++i) {
-		
-					uint rayId = shadowStart + i;
-		
-					uvec2 col16 = shadowColors[rayId];
-					vec3 col = vec3(unpackHalf2x16(col16.x), unpackHalf2x16(col16.y).x);
-		
-					color += col * isShadowed(rayId);
-				}
+			const vec3 v = normalize(hitPos - eye);
+			const float NdotV = max(dot(-hit.normal, v), 0);
+
+			const vec3 kS = fresnelSchlickRoughness(F0, NdotV, m.metallic, m.albedo, m.roughness);
+			const vec3 kD = (1 - kS) * (1 - m.metallic);
+
+			color = vec3(0);
+
+			for(uint i = 0; i < lights.length(); ++i)
+				if(didHit(loc, i))
+					color += shadeLight(F0, m, lights[i], hitPos, hit.normal, v, NdotV);
 
 			break;
 		}
 
 		case DisplayType_Reflection_buffer:
+		case DisplayType_Reflection_albedo:
+		case DisplayType_Reflection_normals:
+		case DisplayType_Reflection_material:
+		case DisplayType_Reflection_object:
+		case DisplayType_Reflection_intersection_side:
+		case DisplayType_Reflection_intersection_attributes:
 			color = imageLoad(reflectionOutput, loc).rgb;
 			break;
 
@@ -181,6 +121,27 @@ void main() {
 		case DisplayType_Intersection_side:
 			color = vec3((floor(hit.intersection.xy) - 2) / 6, 0);
 			break;
+
+		case DisplayType_Shadows_no_reflection: 
+			color = shadeHitRT(prim, hit, skyboxColor, skyboxColor, uloc);
+			break;
+
+		case DisplayType_Dispatch_groups: {
+		
+			const uvec2 res = uvec2(width, height);
+			const uvec2 shift = uvec2(4, gl_SubGroupSizeARB == 32 ? 1 : 2);
+			const uvec2 mask = uvec2(15, gl_SubGroupSizeARB == 32 ? 1 : 3);
+		
+			uvec2 tiles = res >> shift;
+
+			tiles += uvec2(notEqual(res & mask, uvec2(0)));	
+			
+			const uvec2 tile = loc >> shift;
+			const uint tilePos = tile.y * tiles.x + tile.x;
+
+			color = vec3((tilePos & 255) / 255.0, ((tilePos >> 8) & 255) / 255.0, ((tilePos >> 16) & 255) / 255.0);
+			break;
+		}
 	}
 
 	//Exposure mapping

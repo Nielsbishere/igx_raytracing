@@ -31,7 +31,15 @@ oicExposedEnum(
 	Intersection_attributes, Normals, Albedo,
 	Light_buffer, Reflection_buffer, No_secondaries,
 	UI_Only, Material, Object,
-	Intersection_side
+	Intersection_side,
+	Shadows_no_reflection,
+	Dispatch_groups,
+	Reflection_albedo,
+	Reflection_normals,
+	Reflection_material,
+	Reflection_object,
+	Reflection_intersection_side,
+	Reflection_intersection_attributes
 );
 
 oicExposedEnum(
@@ -57,14 +65,13 @@ struct RaytracingInterface : public ViewportInterface {
 	CommandListRef cl;
 	PrimitiveBufferRef mesh;
 	DescriptorsRef raytracingDescriptors;
-	PipelineRef raygenPipeline, dispatchSetup, shadowPipeline, postProcessing, reflectionPipeline;
+	PipelineRef raygenPipeline, initPipeline, shadowPipeline, postProcessing, reflectionPipeline;
 	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, tex2D;
 	SamplerRef samp;
 
-	ShaderBufferRef 
-		raygenData, sphereData, planeData, triangleData, lightData,
-		materialData, shadowRayData, counterBuffer, dispatchArgs, positionBuffer,
-		reflectionRayData, cubeData, shadowColors, shadowOutput, gbuffer;
+	GPUBufferRef 
+		rayConstData, sphereData, planeData, triangleData, lightData,
+		materialData, cubeData, shadowOutput, gbuffer, initData;
 
 	UploadBufferRef uploadBuffer;
 
@@ -79,8 +86,9 @@ struct RaytracingInterface : public ViewportInterface {
 
 	static constexpr usz sphereCount = 7;
 	static constexpr usz triCount = 3;
-	static constexpr usz cubeCount = 1;
+	static constexpr usz cubeCount = 2;
 	static constexpr usz planeCount = 1;
+	static constexpr usz lightCount = 3;
 
 	oic::Random r;
 
@@ -88,13 +96,19 @@ struct RaytracingInterface : public ViewportInterface {
 
 	String pipelines[5] = {
 		"./shaders/raygen.comp.spv",
-		"./shaders/dispatch_setup.comp.spv",
+		"./shaders/init.comp.spv",
 		"./shaders/shadow.comp.spv",
 		"./shaders/post_processing.comp.spv",
 		"./shaders/reflection.comp.spv"
 	};
 
-	//Data required for raygen
+	struct InitData {
+		f32 randomX, randomY;
+		f32 cpuOffsetX, cpuOffsetY;
+		u32 sampleCount;
+	};
+
+	//Data required for raytracing
 	struct GPUData {
 
 		Vec3f32 eye;
@@ -104,10 +118,10 @@ struct RaytracingInterface : public ViewportInterface {
 		u32 height;
 		
 		Vec3f32 p1;
-		f32 randomX;
+		f32 ipd;
 		
 		Vec3f32 p2;
-		f32 randomY;
+		ProjectionType projectionType;
 
 		Vec3f32 skyboxColor; f32 exposure;
 
@@ -115,18 +129,13 @@ struct RaytracingInterface : public ViewportInterface {
 		f32 focalDistance;
 		f32 aperature;
 
-		u32 sampleCount;
+		bool disableUI; u8 padding[3];
 		u32 triCount;
 		u32 sphereCount;
 		u32 cubeCount;
 
 		u32 planeCount;
 		DisplayType displayType;
-		ProjectionType projectionType;
-		f32 ipd;
-
-		bool disableUI;
-		u8 padding[3];
 
 		InflectWithName(
 			{
@@ -145,33 +154,6 @@ struct RaytracingInterface : public ViewportInterface {
 			ipd
 		);
 
-	};
-
-	//A ray payload
-	struct RayPayload {
-
-		Vec2f32 dir;				//Vector direction in spherical coords
-		u32 screenCoord;
-		f32 maxDist;
-
-		Vec2u32 color, padding;
-	};
-
-	//A shadow payload
-	struct ShadowPayload {
-
-		Vec3f32 pos;
-		u32 loc1D;
-
-		Vec3f32 dir;
-		f32 maxDist;
-
-	};
-
-	//The counter buffer
-	struct CounterBuffer {
-		u32 shadowCounter;
-		u32 reflractionCounter;
 	};
 
 	//Material data
@@ -261,10 +243,6 @@ struct RaytracingInterface : public ViewportInterface {
 
 	bool isFileListening{};
 
-	static constexpr u16
-		maxShadowRaysPerPixel = 6,		//Expect 6 shadow rays per pixel max
-		avgShadowRaysPerPixel = 3;		//Expect 3 shadow rays per pixel avg
-
 	struct Hit {
 
 		Vec2f32 intersection;
@@ -282,8 +260,11 @@ struct RaytracingInterface : public ViewportInterface {
 	//
 
 	GPUData *gpuData{};
+	InitData *initDataBuf{};
 
-	Vec2u16 targetSize = { 3840, 2160 }, targetSamples = 8;
+	Vec2u16 targetSize = { 7680, 4320 };
+	u16 targetSamples = 64;
+
 	bool shouldOutputNextFrame{};
 	bool isResizeRequested{};
 
@@ -294,7 +275,7 @@ struct RaytracingInterface : public ViewportInterface {
 	}
 
 	void resetSamples() const {
-		(u32&) gpuData->sampleCount = 0;
+		(u32&) initDataBuf->sampleCount = 0;
 	}
 
 	InflectWithName(
@@ -345,22 +326,17 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("Output"), 0, TextureType::TEXTURE_2D, 0, ShaderAccess::COMPUTE, GPUFormat::RGBA8, true),
 				RegisterLayout(NAME("Raygen data"), 1, GPUBufferType::UNIFORM, 0, ShaderAccess::COMPUTE, sizeof(GPUData)),
 				RegisterLayout(NAME("Spheres"), 2, GPUBufferType::STRUCTURED, 0, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-				RegisterLayout(NAME("Planes"), 4, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-				RegisterLayout(NAME("Triangles"), 5, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
-				RegisterLayout(NAME("Materials"), 3, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
-				RegisterLayout(NAME("ShadowRays"), 6, GPUBufferType::STRUCTURED, 4, ShaderAccess::COMPUTE, sizeof(ShadowPayload)),
-				RegisterLayout(NAME("CounterBuffer"), 7, GPUBufferType::STORAGE, 5, ShaderAccess::COMPUTE, sizeof(CounterBuffer)),
-				RegisterLayout(NAME("DispatchArgs"), 8, GPUBufferType::STRUCTURED, 6, ShaderAccess::COMPUTE, sizeof(Vec4u32)),
-				RegisterLayout(NAME("Lights"), 9, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
-				RegisterLayout(NAME("PositionBuffer"), 10, GPUBufferType::STRUCTURED, 8, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
-				RegisterLayout(NAME("ReflectionRays"), 11, GPUBufferType::STRUCTURED, 9, ShaderAccess::COMPUTE, sizeof(RayPayload)),
-				RegisterLayout(NAME("Cubes"), 12, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube)),
-				RegisterLayout(NAME("Accumulation buffer"), 13, TextureType::TEXTURE_2D, 1, ShaderAccess::COMPUTE, GPUFormat::RGBA32f, true),
-				RegisterLayout(NAME("Reflection buffer"), 14, TextureType::TEXTURE_2D, 2, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true),
-				RegisterLayout(NAME("Shadow output"), 15, GPUBufferType::STRUCTURED, 11, ShaderAccess::COMPUTE, sizeof(u32)),
-				RegisterLayout(NAME("Shadow colors"), 16, GPUBufferType::STRUCTURED, 12, ShaderAccess::COMPUTE, sizeof(Vec2u32)),
-				RegisterLayout(NAME("HitBuffer"), 17, GPUBufferType::STRUCTURED, 13, ShaderAccess::COMPUTE, sizeof(Hit)),
-				RegisterLayout(NAME("UI"), 18, SamplerType::SAMPLER_MS, 0, ShaderAccess::COMPUTE)
+				RegisterLayout(NAME("Planes"), 3, GPUBufferType::STRUCTURED, 1, ShaderAccess::COMPUTE, sizeof(Vec4f32)),
+				RegisterLayout(NAME("Triangles"), 4, GPUBufferType::STRUCTURED, 2, ShaderAccess::COMPUTE, sizeof(Triangle)),
+				RegisterLayout(NAME("Materials"), 5, GPUBufferType::STRUCTURED, 3, ShaderAccess::COMPUTE, sizeof(Material)),
+				RegisterLayout(NAME("Lights"), 6, GPUBufferType::STRUCTURED, 7, ShaderAccess::COMPUTE, sizeof(Light)),
+				RegisterLayout(NAME("Cubes"), 7, GPUBufferType::STRUCTURED, 10, ShaderAccess::COMPUTE, sizeof(Cube)),
+				RegisterLayout(NAME("Accumulation buffer"), 8, TextureType::TEXTURE_2D, 1, ShaderAccess::COMPUTE, GPUFormat::RGBA32f, true),
+				RegisterLayout(NAME("Reflection buffer"), 9, TextureType::TEXTURE_2D, 2, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true),
+				RegisterLayout(NAME("Shadow output"), 10, GPUBufferType::STRUCTURED, 11, ShaderAccess::COMPUTE, sizeof(u32)),
+				RegisterLayout(NAME("HitBuffer"), 11, GPUBufferType::STRUCTURED, 13, ShaderAccess::COMPUTE, sizeof(Hit)),
+				RegisterLayout(NAME("UI"), 12, SamplerType::SAMPLER_MS, 0, ShaderAccess::COMPUTE),
+				RegisterLayout(NAME("Init"), 13, GPUBufferType::STORAGE, 14, ShaderAccess::COMPUTE, sizeof(InitData))
 			)
 		};
 
@@ -485,15 +461,14 @@ struct RaytracingInterface : public ViewportInterface {
 
 		//Create uniform buffer
 
-		raygenData = {
+		rayConstData = {
 			g, NAME("Raygen uniform buffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE,
-				{ { NAME("mask"), ShaderBuffer::Layout(0, Buffer(sizeof(GPUData))) } }
+			GPUBuffer::Info(
+				sizeof(GPUData), GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE
 			)
 		};
 
-		gpuData = (GPUData*) raygenData->getBuffer();
+		gpuData = (GPUData*) rayConstData->getBuffer();
 
 		gpuData->eye = eye;
 		gpuData->triCount = triCount;
@@ -508,37 +483,39 @@ struct RaytracingInterface : public ViewportInterface {
 
 		sphereData = {
 			g, NAME("Sphere data"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::CPU_WRITE,
-				{ { NAME("spheres"), ShaderBuffer::Layout(0, sphereCount * sizeof(Vec4f32)) } }
+			GPUBuffer::Info(
+				sphereCount * sizeof(Vec4f32), GPUBufferType::STRUCTURED, GPUMemoryUsage::CPU_WRITE
 			)
 		};
 
-		Vec4f32 planes[] = {
+		Vec4f32 planes[planeCount] = {
 			Vec4f32(0, -1, 0, 0)
 		};
 
 		planeData = {
 			g, NAME("Plane data"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("planes"), ShaderBuffer::Layout(0, Buffer((u8*)planes, (u8*)planes + sizeof(planes))) } }
+			GPUBuffer::Info(
+				Buffer((const u8*)planes, (const u8*)planes + sizeof(planes)), GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL
 			)
 		};
 
-		Cube cubes[] = {
-			{ { 0, 0, 0 }, 0, { 1, 1, 1 }, 6 }
+		//TODO: If kS == 0, there won't be a reflection
+		//		If kD == 0, there won't be shadow rays
+
+		Cube cubes[cubeCount] = {
+			{ { 0, 0, 0 }, 0, { 1, 1, 1 }, 1 },
+			{ { -2, 0, -2 }, 1, { -1, 1, -1 }, 6 }
 		};
 
 		cubeData = {
 			g, NAME("Cube data"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("cubes"), ShaderBuffer::Layout(0, Buffer((u8*)cubes, (u8*)cubes + sizeof(cubes))) } }
+			GPUBuffer::Info(
+				Buffer((const u8*)cubes, (const u8*)cubes + sizeof(cubes)),
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL
 			)
 		};
 
-		Triangle triangles[] = {
+		Triangle triangles[triCount] = {
 			{ Vec3f32(1, 1, 0), 0, Vec3f32(-1, 1, 0), 0, Vec3f32(1, 0, 1), 0 },
 			{ Vec3f32(-1, 4, 0), 0, Vec3f32(1, 4, 0), 1, Vec3f32(1, 3, 1), 0 },
 			{ Vec3f32(-1, 7, 0), 0, Vec3f32(1, 7, 0), 2, Vec3f32(1, 5, 1), 0 }
@@ -546,11 +523,21 @@ struct RaytracingInterface : public ViewportInterface {
 
 		triangleData = {
 			g, NAME("Triangle data"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("triangles"), ShaderBuffer::Layout(0, Buffer((u8*)triangles, (u8*)triangles + sizeof(triangles))) } }
+			GPUBuffer::Info(
+				Buffer((const u8*)triangles, (const u8*)triangles + sizeof(triangles)),
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL
 			)
 		};
+
+		initData = {
+			g, NAME("Init data"),
+			GPUBuffer::Info(
+				sizeof(InitData),
+				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE | GPUMemoryUsage::CPU_WRITE
+			)
+		};
+
+		initDataBuf = (InitData*) initData->getBuffer();
 
 		Material materials[] = {
 			{ { 1, 0.5, 1 }, 0,	{ 0.05f, 0.01f, 0.05f }, 1,		{ 0, 0, 0 }, 0, {}, 0 },
@@ -565,13 +552,13 @@ struct RaytracingInterface : public ViewportInterface {
 
 		materialData = {
 			g, NAME("Material data"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("materials"), ShaderBuffer::Layout(0, Buffer((u8*)materials, (u8*)materials + sizeof(materials))) } }
+			GPUBuffer::Info(
+				Buffer((const u8*)materials, (const u8*)materials + sizeof(materials)),
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL
 			)
 		};
 
-		Light lights[] = {
+		Light lights[lightCount] = {
 			{ { 0, 0, 0 }, 0, { 0, -1, 0 }, 0, { 0.4f, 0.2f, 0.4f }, 0 },
 			{ { 0, 0.1f, 0 }, 5, { 0, 0, 0 }, 1, { 1.5f, 1.5f, 1.5f }, 0 },
 			{ { 2, 2, 2 }, 7, { 0, 0, 0 }, 1, { 0.7f, 0.5f, 1.5f }, 0 }
@@ -579,25 +566,9 @@ struct RaytracingInterface : public ViewportInterface {
 
 		lightData = {
 			g, NAME("Lights"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL,
-				{ { NAME("lights"), ShaderBuffer::Layout(0, Buffer((u8*)lights, (u8*)lights + sizeof(lights))) } }
-			)
-		};
-
-		counterBuffer = {
-			g, NAME("Counter buffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("counterBuffer"), ShaderBuffer::Layout(0, sizeof(CounterBuffer)) } }
-			)
-		};
-
-		dispatchArgs = {
-			g, NAME("Dispatch args"),
-			ShaderBuffer::Info(
-				GPUBufferType::STORAGE, GPUMemoryUsage::GPU_WRITE,
-				{ { NAME("dispatchArgs"), ShaderBuffer::Layout(0, sizeof(Vec4u32) * 2) } }
+			GPUBuffer::Info(
+				Buffer((const u8*)lights, (const u8*)lights + sizeof(lights)),
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::LOCAL
 			)
 		};
 
@@ -637,17 +608,14 @@ struct RaytracingInterface : public ViewportInterface {
 		//Create descriptors
 
 		auto descriptorsInfo = Descriptors::Info(pipelineLayout, {});
-		descriptorsInfo.resources[0] = nullptr;
-		descriptorsInfo.resources[1] = { raygenData, 0 };
+		descriptorsInfo.resources[1] = { rayConstData, 0 };
 		descriptorsInfo.resources[2] = { sphereData, 0 };
-		descriptorsInfo.resources[3] = { materialData, 0 };
-		descriptorsInfo.resources[4] = { planeData, 0 };
-		descriptorsInfo.resources[5] = { triangleData, 0 };
-		descriptorsInfo.resources[6] = nullptr;
-		descriptorsInfo.resources[7] = { counterBuffer, 0 };
-		descriptorsInfo.resources[8] = { dispatchArgs, 0 };
-		descriptorsInfo.resources[9] = { lightData, 0 };
-		descriptorsInfo.resources[12] = { cubeData, 0 };
+		descriptorsInfo.resources[3] = { planeData, 0 };
+		descriptorsInfo.resources[4] = { triangleData, 0 };
+		descriptorsInfo.resources[5] = { materialData, 0 };
+		descriptorsInfo.resources[6] = { lightData, 0 };
+		descriptorsInfo.resources[7] = { cubeData, 0 };
+		descriptorsInfo.resources[13] = { initData, 0 };
 
 		raytracingDescriptors = {
 			g, NAME("Raytracing descriptors"),
@@ -688,7 +656,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 	//Helper functions
 
-	void updateUniforms() {
+	void updateUniforms(bool stationary) {
 
 		const f32 aspect = res.cast<Vec2f32>().aspect();
 		const f32 nearPlane = f32(std::tan(fov * 0.5_deg));
@@ -703,15 +671,17 @@ struct RaytracingInterface : public ViewportInterface {
 		gpuData->p1 = p1.cast<Vec3f32>();
 		gpuData->p2 = p2.cast<Vec3f32>();
 
-		//TODO: This should be a setup shader or something, so we can run it multiple times
+		initDataBuf->cpuOffsetX = r.range<f32>(-100, 100);
+		initDataBuf->cpuOffsetY = r.range<f32>(-100, 100);
 
-		gpuData->randomX = r.range<f32>(-100, 100);
-		gpuData->randomY = r.range<f32>(-100, 100);
+		if (stationary) {
+			++initDataBuf->sampleCount;
+			stationary = false;
+		}
+		else initDataBuf->sampleCount = 0;
 
-		++gpuData->sampleCount;
-
-		memcpy(raygenData->getBuffer(), gpuData, sizeof(*gpuData));
-		raygenData->flush(0, sizeof(*gpuData));
+		rayConstData->flush(0, sizeof(*gpuData));
+		initData->flush(0, sizeof(*initDataBuf));
 	}
 
 	//Update size of surfaces
@@ -721,7 +691,7 @@ struct RaytracingInterface : public ViewportInterface {
 		g.wait();					//Ensure we don't have any work pending
 
 		res = size;
-		gpuData->sampleCount = 0;
+		initDataBuf->sampleCount = 0;
 
 		gpuData->width = size.x;
 		gpuData->height = size.y;
@@ -761,71 +731,35 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
-		shadowRayData.release();
-		shadowRayData = {
-			g, NAME("Shadow ray buffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
-				{ { NAME("shadowRays"), ShaderBuffer::Layout(0, sizeof(ShadowPayload) * maxShadowRaysPerPixel * size.prod()) } }
-			)
-		};
+		constexpr Vec2f32 perTile = Vec2f32(THREADS_X, 64 / THREADS_X);
 
-		shadowColors.release();
-		shadowColors = {
-			g, NAME("Shadow color buffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
-				{ { NAME("shadowColors"), ShaderBuffer::Layout(0, sizeof(Vec2u32) * maxShadowRaysPerPixel * size.prod()) } }
-			)
-		};
+		Vec2u16 tiles = (size.cast<Vec2f32>() / perTile).ceil().cast<Vec2u16>();
 
 		shadowOutput.release();
 		shadowOutput = {
 			g, NAME("Shadow output buffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
-				{ { NAME("shadowOutput"), ShaderBuffer::Layout(0, u64(std::ceil(maxShadowRaysPerPixel * size.prod() / 32.0)) * 4) } }
-			)
-		};
-
-		reflectionRayData.release();
-		reflectionRayData = {
-			g, NAME("Reflection ray buffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
-				{ { NAME("reflectionRays"), ShaderBuffer::Layout(0, sizeof(RayPayload) * size.prod()) } }
-			)
-		};
-
-		positionBuffer.release();
-		positionBuffer = {
-			g, NAME("Position buffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
-				{ { NAME("positionBuffer"), ShaderBuffer::Layout(0, sizeof(Vec4f32) * size.prod()) } }
+			GPUBuffer::Info(
+				sizeof(u64) * tiles.x * tiles.y,		//a uint64 per tile
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY
 			)
 		};
 
 		gbuffer.release();
 		gbuffer = {
 			g, NAME("HitBuffer"),
-			ShaderBuffer::Info(
-				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY,
-				{ { NAME("hitBuffer"), ShaderBuffer::Layout(0, sizeof(Hit) * size.prod()) } }
+			GPUBuffer::Info(
+				sizeof(Hit) * size.prod<usz>(),
+				GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY
 			)
 		};
 
 		raytracingDescriptors->updateDescriptor(0, { raytracingOutput, TextureType::TEXTURE_2D });
-		raytracingDescriptors->updateDescriptor(6, { shadowRayData, 0 });
-		raytracingDescriptors->updateDescriptor(10, { positionBuffer, 0 });
-		raytracingDescriptors->updateDescriptor(11, { reflectionRayData, 0 });
-		raytracingDescriptors->updateDescriptor(13, { raytracingAccumulation, TextureType::TEXTURE_2D });
-		raytracingDescriptors->updateDescriptor(14, { reflectionBuffer, TextureType::TEXTURE_2D });
-		raytracingDescriptors->updateDescriptor(15, { shadowOutput, 0 });
-		raytracingDescriptors->updateDescriptor(16, { shadowColors, 0 });
-		raytracingDescriptors->updateDescriptor(17, { gbuffer, 0 });
-		raytracingDescriptors->updateDescriptor(18, { samplerNearest, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS });
-		raytracingDescriptors->flush({ { 0, 1 }, { 6, 1 }, { 10, 2 }, { 13, 6 } });
+		raytracingDescriptors->updateDescriptor(8, { raytracingAccumulation, TextureType::TEXTURE_2D });
+		raytracingDescriptors->updateDescriptor(9, { reflectionBuffer, TextureType::TEXTURE_2D });
+		raytracingDescriptors->updateDescriptor(10, { shadowOutput, 0 });
+		raytracingDescriptors->updateDescriptor(11, { gbuffer, 0 });
+		raytracingDescriptors->updateDescriptor(12, { samplerNearest, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS });
+		raytracingDescriptors->flush({ { 0, 1 }, { 8, 5 } });
 
 		if(!isResizeRequested)
 			swapchain->onResize(size);
@@ -841,7 +775,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 			//Prepare data
 
-			FlushBuffer(raygenData, uploadBuffer),
+			FlushBuffer(rayConstData, uploadBuffer),
 			FlushBuffer(lightData, uploadBuffer),
 			FlushBuffer(materialData, uploadBuffer),
 			FlushBuffer(triangleData, uploadBuffer),
@@ -849,25 +783,24 @@ struct RaytracingInterface : public ViewportInterface {
 			FlushBuffer(planeData, uploadBuffer),
 			FlushBuffer(sphereData, uploadBuffer),
 			FlushBuffer(mesh, uploadBuffer),
+			FlushBuffer(initData, uploadBuffer),
 			FlushImage(tex2D, uploadBuffer),
 
-			ClearBuffer(counterBuffer),
+			//Prepare all shaders
+
+			BindDescriptors(raytracingDescriptors),
+			BindPipeline(initPipeline),
+			Dispatch(1),
 
 			//Dispatch rays
 
 			BindPipeline(raygenPipeline),
-			BindDescriptors(raytracingDescriptors),
 			Dispatch(res.cast<Vec2u32>()),
-
-			//Prepare dispatch
-
-			BindPipeline(dispatchSetup),
-			Dispatch(1),
 
 			//Shadows
 
 			BindPipeline(shadowPipeline),
-			DispatchIndirect(dispatchArgs, 0),
+			Dispatch(Vec3u32(res.x, res.y, lightCount)),
 
 			//Reflections
 
@@ -905,15 +838,15 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (modified & 2) {
 
-			Buffer dispatch;
-			oicAssert("Couldn't load dispatch shader", oic::System::files()->read(pipelines[1], dispatch));
+			Buffer initShader;
+			oicAssert("Couldn't load init shader", oic::System::files()->read(pipelines[1], initShader));
 
-			dispatchSetup.release();
-			dispatchSetup = {
-				g, NAME("Dispatch pipeline"),
+			initPipeline.release();
+			initPipeline = {
+				g, NAME("Init shaders pipeline"),
 				Pipeline::Info(
 					Pipeline::Flag::NONE,
-					dispatch,
+					initShader,
 					pipelineLayout,
 					Vec3u32{ 1, 1, 1 }
 				)
@@ -932,7 +865,7 @@ struct RaytracingInterface : public ViewportInterface {
 					Pipeline::Flag::NONE,
 					shadow,
 					pipelineLayout,
-					Vec3u32{ THREADS, 1, 1 }
+					Vec3u32{ THREADS_X, THREADS_Y, 1 }
 				)
 			};
 		}
@@ -949,7 +882,7 @@ struct RaytracingInterface : public ViewportInterface {
 					Pipeline::Flag::NONE,
 					postProcess,
 					pipelineLayout,
-					Vec3u32{ 8, 8, 1 }
+					Vec3u32{ THREADS_X, THREADS_Y, 1 }
 				)
 			};
 		}
@@ -1006,8 +939,6 @@ struct RaytracingInterface : public ViewportInterface {
 			isResizeRequested = true;
 			resize(vi, targetSize.cast<Vec2u32>());
 
-			gpuData->sampleCount = 0;
-
 			bool disableUI = gpuData->disableUI;
 			gpuData->disableUI = true;
 
@@ -1018,8 +949,13 @@ struct RaytracingInterface : public ViewportInterface {
 				)
 			};
 
+			List<CommandList*> commands(gpuData->displayType == DisplayType::Accumulation ? targetSamples : 1);
+
+			for (auto &cmd : commands)
+				cmd = cl;
+
 			g.presentToCpu<RaytracingInterface, &RaytracingInterface::onRenderFinish>(
-				{ cl }, raytracingOutput, cpuOutput, this
+				commands, raytracingOutput, cpuOutput, this
 			);
 
 			//Reset to old state and wait for work to finish
@@ -1031,7 +967,6 @@ struct RaytracingInterface : public ViewportInterface {
 
 			isResizeRequested = false;
 			shouldOutputNextFrame = false;
-			gpuData->sampleCount = 0;
 		}
 
 		//Regular render
@@ -1091,20 +1026,22 @@ struct RaytracingInterface : public ViewportInterface {
 
 		fov = f32(oic::Math::clamp(fov - fovChangeSpeed * fovChangeDir * dt, 0.99999999, 149.99999999));
 
+		bool stationary = true;
+
 		if (inputDir.any()) {
 
 			const f32 speedUp = isShift ? 10.f : 1.f;
 
 			Vec3f32 d = inputDir.clamp(-1, 1) * f32(dt * speed * speedUp);
 
-			if(d.any())
-				gpuData->sampleCount = 0;
+			if (d.any())
+				stationary = false;
 
 			gpuData->eye -= (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
 		}
 
 		if (res.neq(0).all())
-			updateUniforms();
+			updateUniforms(stationary);
 	}
 
 	//Input

@@ -40,6 +40,8 @@ float ndfGGX(const vec3 n, const vec3 h, const float roughness) {
 	float denom = NdotH * NdotH * (a2 - 1) + 1;
 	denom *= denom * pi;
 
+	if(denom == 0) return 0;
+
 	return a2 / denom;
 }
 
@@ -53,9 +55,14 @@ float geomSmith(const float NdotV, const float NdotL, const float k) {
 	return geomSchlickGGX(NdotV, k) * geomSchlickGGX(NdotL, k);
 }
 
+float pow5(float f) {
+	float f2 = f * f;
+	return f2 * f2 * f;
+}
+
 //Fresnel approximation (Schlick)
 vec3 fresnelSchlick(const vec3 F0, const vec3 h, const vec3 v) {
-	return F0 + (1 - F0) * pow(1 - dot(h, v), 5);
+	return F0 + (1 - F0) * pow5(1 - max(dot(h, v), 0));
 }
 
 //Fresnel approximation (Schlick roughness)
@@ -86,7 +93,10 @@ vec3 cookTorrance(
 	const float G = geomSmith(NdotV, NdotL, k);
 	const vec3 F = fresnelSchlick(F0, h, v);
 
-	const vec3 kS = D * F * G / (4 * NdotL * NdotV + specularEpsilon);
+	const float denom = 4 * NdotL * NdotV + specularEpsilon;
+	const vec3 num = D * G * F;
+
+	const vec3 kS = num / denom;
 	const vec3 kD = (1 - F) * (1 - metallic);
 
 	const vec3 color = kD * albedo + kS;
@@ -100,6 +110,29 @@ layout(binding=7, std140) readonly buffer Lights {
 	Light lights[];
 };
 
+vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, inout float maxDist) {
+
+	vec3 l = light.dir;
+	brightness = 1;
+	maxDist = noHit;
+
+	if(light.type == LightType_Point) {
+
+		l = pos - light.pos;
+		const float dst = length(l);
+
+		const float normDist = dst / light.rad;
+
+		brightness = max(1 - normDist * normDist, 0);
+
+		//Calculate params for point light shadows
+
+		maxDist = dst;				//TODO: This is along the direction of the light, it should be along the distance of the ray
+	}
+
+	return normalize(l);
+}
+
 vec3 shadeLight(
 	const vec3 F0,
 	const Material m,
@@ -110,22 +143,8 @@ vec3 shadeLight(
 	const float NdotV
 ) {
 
-	vec3 l = light.dir;
-	float invSquareDist = 1;
-	float maxDist = noHit;
-
-	if(light.type == LightType_Point) {
-
-		l = pos - light.pos;
-		const float dst = length(l);
-		invSquareDist = max(1 - dst / light.rad, 0);		//TODO: This should be dst^2
-
-		//Calculate params for point light shadows
-
-		maxDist = dst;				//TODO: This is along the direction of the light, it should be along the distance of the ray
-	}
-
-	l = normalize(l);
+	float brightness, maxDist;
+	vec3 l = getDirToLight(light, pos, brightness, maxDist);
 
 	//Calculate color
 
@@ -134,7 +153,7 @@ vec3 shadeLight(
 	
 	const float NdotL = max(dot(n, l), 0);
 
-	return cookTorrance(F0, m.albedo, light, n, l, v, NdotV, invSquareDist, m.roughness, m.metallic, k, NdotL);
+	return cookTorrance(F0, m.albedo, light, n, l, v, NdotV, brightness, m.roughness, m.metallic, k, NdotL);
 }
 
 //Per pixel shading
@@ -180,4 +199,14 @@ vec3 shadeHit(Ray ray, Hit hit, vec3 reflection, vec3 missColor) {
 vec3 shadeRay(Ray ray, vec3 reflection, vec3 missColor) {
 	Hit hit = traceGeometry(ray);
 	return shadeHit(ray, hit, reflection, missColor);
+}
+
+uint indexToLight(uvec2 loc, uvec2 res, uint lightId, uvec2 shift, uvec2 mask) {
+
+	const uvec2 tile = loc >> shift;
+	uvec2 tiles = res >> shift;
+
+	tiles += uvec2(notEqual(res & mask, uvec2(0)));		//ceil(res / threads)
+
+	return tile.x + tile.y * tiles.x + lightId * tiles.y * tiles.x;
 }

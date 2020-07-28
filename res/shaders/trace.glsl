@@ -15,7 +15,15 @@ const uint
 	DisplayType_UI_Only = 8,
 	DisplayType_Material = 9,
 	DisplayType_Object = 10,
-	DisplayType_Intersection_side = 11;
+	DisplayType_Intersection_side = 11,
+	DisplayType_Shadows_no_reflection = 12,
+	DisplayType_Dispatch_groups = 13,
+	DisplayType_Reflection_albedo = 14,
+	DisplayType_Reflection_normals = 15,
+	DisplayType_Reflection_material = 16,
+	DisplayType_Reflection_object = 17,
+	DisplayType_Reflection_intersection_side = 18,
+	DisplayType_Reflection_intersection_attributes = 19;
 
 const uint 
 	ProjectionType_Default = 0, 
@@ -35,10 +43,10 @@ layout(binding=0, std140) uniform GPUData {
 	uint height;
 
 	vec3 p1;
-	float randomX;
+	float ipd;
 
 	vec3 p2;
-	float randomY;
+	uint projectionType;
 
 	vec3 skyboxColor;
 	float exposure;
@@ -47,18 +55,20 @@ layout(binding=0, std140) uniform GPUData {
 	float focalDistance;
 	float aperature;
 
-	uint sampleCount;
+	uint disableUI;
 	uint triangleCount;
 	uint sphereCount;
 	uint cubeCount;
 
 	uint planeCount;
 	uint displayType;
-	uint projectionType;
-	float ipd;
 
-	uint disableUI;
+};
 
+layout(binding=14, std430) buffer InitData {
+	float randomX, randomY;
+	float cpuOffsetX, cpuOffsetY;
+	uint sampleCount;
 };
 
 layout(binding=0, std140) readonly buffer Spheres {

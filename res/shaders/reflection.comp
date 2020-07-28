@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_gpu_shader_int64 : require
 #include "defines.glsl"
 #include "trace.glsl"
 #include "light.glsl"
@@ -28,28 +29,60 @@ void main() {
 	const uint loc1D = loc.x + loc.y * width;
 	const Ray prim = calculatePrimary(loc);
 
-	const Hit hit = hitBuffer[loc1D];
+	const Hit primHit = hitBuffer[loc1D];
 
-	if(hit.hitT == noHit) {
+	if(primHit.hitT == noHit) {
 		imageStore(reflectionOutput, ivec2(loc), vec4(0));
 		return;
 	}
 
-	const vec3 pos = prim.pos + prim.dir * hit.hitT;
+	const vec3 pos = prim.pos + prim.dir * primHit.hitT;
 
 	//Reflect ray
 
-	const vec3 refl = reflect(normalize(pos - eye), hit.normal);
+	const vec3 v = normalize(pos - eye);
+	vec3 refl = reflect(v, primHit.normal);
+
+	if(dot(v, primHit.normal) < 0)
+		refl *= -1;
 
 	const Ray ray = Ray(
-		pos + hit.normal * epsilon, 0,
+		pos + primHit.normal * epsilon, 0,
 		refl, 0
 	);
+	
+	Hit hit = traceGeometry(ray);
+	vec3 col = shadeHit(ray, hit, skyboxColor, skyboxColor);
 
-	vec3 col = shadeRay(ray, skyboxColor, skyboxColor);
+	switch(displayType) {
+		
+		case DisplayType_Reflection_albedo:
+			col = materials[hit.material].albedo;
+			break;
 
-	if(any(isnan(col)))
-		col = vec3(1000, 0, 0);
+		case DisplayType_Reflection_normals:
+			col = hit.normal.xyz * 0.5 + 0.5;
+			break;
+
+		case DisplayType_Reflection_material:
+			col = vec3(float(hit.hitT != noHit ? hit.material + 1 : 0) / (materials.length() + 1));
+			break;
+
+		case DisplayType_Reflection_object:
+			col = vec3(float(hit.hitT != noHit ? hit.object + 1 : 0) / (1 + triangleCount + sphereCount + cubeCount + planeCount));
+			break;
+
+		case DisplayType_Reflection_intersection_side:
+			col = vec3((floor(hit.intersection.xy) - 2) / 6, 0);
+			break;
+
+		case DisplayType_Reflection_intersection_attributes:
+			col = vec3(mod(hit.intersection, 2), 0);
+			break;
+
+		default:
+			col = shadeHit(ray, hit, skyboxColor, skyboxColor);
+	}
 
 	imageStore(reflectionOutput, ivec2(loc), vec4(col, 0));
 }

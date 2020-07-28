@@ -4,61 +4,85 @@
 #extension GL_ARB_gpu_shader_int64 : require
 #include "defines.glsl"
 #include "trace.glsl"
-#include "utils.glsl"
+#include "light.glsl"
 
-layout(local_size_x = THREADS, local_size_y = 1, local_size_z = 1) in;
-
-layout(binding=4, std140) readonly buffer ShadowRays {
-	ShadowPayload shadowRays[];
+layout(binding=11, std430) writeonly buffer ShadowOutput32 {
+    uint shadowOutput32[];
 };
 
-layout(binding=8, std140) readonly buffer PositionBuffer {
-	vec3 positions[];
+layout(binding=11, std430) writeonly buffer ShadowOutput64 {
+    uint64_t shadowOutput64[];
 };
 
-layout(binding=5, std140) readonly buffer Counters {
-	uint shadowCounter;
-	uint reflrectionCounter;
+layout(binding=13, std140) readonly buffer HitBuffer {
+	Hit hitBuffer[];
 };
 
-layout(binding=11, std140) writeonly buffer ShadowOutput {
-	uint shadowOutput[];
-};
+//Shadows render as the following:
+//
+//16x16 thread
+//On NV: 8x 16x2 per group 
+//On AMD: 4x 16x4 per group 
+//
+//These blocks are stored linearly in memory by this group id
+//therefore: loc / (16, gl_SubGroupSizeARB / 16) = dispatchId
+//			dispatchId.x + dispatchId.y * ceil(width / 16.f)
 
-//Handling intersection
+layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
 
 void main() {
 
-	uint shadowId = gl_GlobalInvocationID.x;
+	//Check if out of bounds
+	
+	const uvec2 loc = gl_GlobalInvocationID.xy;
 
-	if(shadowId >= shadowCounter)
+	if(loc.x >= width || loc.y >= height)
 		return;
 
-	const ShadowPayload payload = shadowRays[shadowId];
+	const uint loc1D = loc.x + loc.y * width;
+	Hit h = hitBuffer[loc1D];
+
+	const Ray prim = calculatePrimary(loc);
+
+	const vec3 hitPos = prim.pos + prim.dir * h.hitT;
 
 	//Shoot rays for this warp
+
+	uint lightId = gl_GlobalInvocationID.z;
+
+	float brightness, maxDist;
+	vec3 l = getDirToLight(lights[lightId], hitPos, brightness, maxDist);
 	
 	const Ray ray = Ray(
-		payload.pos, 0,
-		payload.dir, 0
+		hitPos + h.normal * epsilon, 0,
+		-l, 0
 	);
 
-	uint64_t hitRays = ballotARB(traceOcclusion(ray, payload.maxDist));
+	uint64_t hitRays = ballotARB(h.hitT == noHit ? false : traceOcclusion(ray, maxDist));
 
 	//Store rays for the first thread in this warp
 	//Assume 32 (NV) or 64 (AMD)
 
 	if(gl_SubGroupInvocationARB == 0) {
 
-		uint shadowDiv32 = shadowId >> 5;
+		const uvec2 res = uvec2(width, height);
 
-		if(gl_SubGroupSizeARB == 32)
-			shadowOutput[shadowDiv32] = uint(hitRays);
+		//TODO: If THREADS_X changes, this has to as well
 
-		else {
-			uint shadowDiv32x2 = shadowDiv32 << 1;
-			shadowOutput[shadowDiv32x2 | 1] = uint(hitRays >> 32);
-			shadowOutput[shadowDiv32x2]		= uint(hitRays);
+		if(gl_SubGroupSizeARB == 32) { 
+	
+			//const uvec2 threads = uvec2(16, 2);
+			const uvec2 shift = uvec2(4, 1);			//log2(threads)
+			const uvec2 mask = uvec2(15, 1);			//threads - 1
+
+			shadowOutput32[indexToLight(loc, res, lightId, shift, mask)] = uint(hitRays);
+			return;
 		}
+	
+		//const uvec2 threads = uvec2(16, 4);
+		const uvec2 shift = uvec2(4, 2);			//log2(threads)
+		const uvec2 mask = uvec2(15, 3);			//threads - 1
+
+		shadowOutput64[indexToLight(loc, res, lightId, shift, mask)] = hitRays;
 	}
 }
