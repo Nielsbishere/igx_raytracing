@@ -1,5 +1,6 @@
 #include "utils.glsl"
 #include "material.glsl"
+#include "trace.glsl"
 
 const float minRoughness = 0.01;
 const float specularEpsilon = 0.001;
@@ -183,17 +184,32 @@ layout(binding=3, std140) readonly buffer Materials {
 	Material materials[];
 };
 
-vec3 shadeHit(Ray ray, Hit hit, vec3 reflection, vec3 missColor) {
+vec3 shadeHit(Ray ray, Hit hit, vec3 reflection) {
 
 	if(hit.hitT == noHit)
-		return vec3(missColor);
+		return vec3(sampleSkybox(ray.dir));
 
 	const vec3 position = ray.pos + ray.dir * hit.hitT;
 	
-	const vec3 v = normalize(position - eye);
-	const float NdotV = max(dot(-hit.normal, v), 0);
+	const vec3 v = ray.dir;
+	const float NdotV = max(dot(v, -hit.normal), 0);
 
 	return shade(materials[hit.material], position, hit.normal, v, NdotV, reflection);
+}
+
+vec3 shadeHitFinalRecursion(Ray ray, Hit hit) {
+
+	if(hit.hitT == noHit)
+		return vec3(sampleSkybox(ray.dir));
+
+	const vec3 position = ray.pos + ray.dir * hit.hitT;
+	
+	const vec3 v = ray.dir;
+	const float NdotV = max(dot(v, -hit.normal), 0);
+
+	const vec3 reflected = sampleSkybox(reflect(v, hit.normal));
+
+	return shade(materials[hit.material], position, hit.normal, v, NdotV, reflected);
 }
 
 uint indexToLight(uvec2 loc, uvec2 res, uint lightId, uvec2 shift, uvec2 mask) {

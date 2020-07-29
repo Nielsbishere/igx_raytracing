@@ -3,6 +3,7 @@
 #define ALLOW_PLANES
 #define ALLOW_TRIANGLES
 #define ALLOW_CUBES
+#define GRAPHICS_DEBUG
 
 //#define DISABLE_SHADOWS
 //#define DISABLE_REFLECTIONS

@@ -36,20 +36,26 @@ void main() {
 	const Hit hit = hitBuffer[loc1D];
 	const vec3 hitPos = hit.hitT * prim.dir + prim.pos;
 
+	const vec3 sky = sampleSkybox(prim.dir);
+
 	vec3 color;
+
+	#ifdef GRAPHICS_DEBUG
 
 	switch(displayType) {
 
 		case DisplayType_Default: {
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
-			color = shadeHitRT(prim, hit, reflectionColor, skyboxColor, uloc);
+			color = shadeHitRT(prim, hit, reflectionColor, uloc);
 			break;
 		}
 
 		case DisplayType_Accumulation: {
 
+	#endif
+
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
-			color = shadeHitRT(prim, hit, reflectionColor, skyboxColor, uloc);
+			color = shadeHitRT(prim, hit, reflectionColor, uloc);
 		
 			if(sampleCount > 1)
 				color += imageLoad(accumulationBuffer, loc).rgb;
@@ -57,6 +63,9 @@ void main() {
 			imageStore(accumulationBuffer, loc, vec4(color, 0));
 
 			color /= sampleCount;
+
+	#ifdef GRAPHICS_DEBUG
+
 			break;
 		}
 
@@ -69,7 +78,7 @@ void main() {
 			break;
 
 		case DisplayType_Albedo:
-			color = hit.hitT != noHit ?  materials[hit.material].albedo : skyboxColor;
+			color = hit.hitT != noHit ?  materials[hit.material].albedo : sky;
 			break;
 
 		case DisplayType_Light_buffer: {
@@ -99,11 +108,12 @@ void main() {
 		case DisplayType_Reflection_object:
 		case DisplayType_Reflection_intersection_side:
 		case DisplayType_Reflection_intersection_attributes:
+		case DisplayType_Reflection_of_reflection:
 			color = imageLoad(reflectionOutput, loc).rgb;
 			break;
 
 		case DisplayType_No_secondaries:
-			color = shadeHit(prim, hit, skyboxColor, skyboxColor);
+			color = shadeHitFinalRecursion(prim, hit);
 			break;
 
 		case DisplayType_UI_Only:
@@ -123,7 +133,7 @@ void main() {
 			break;
 
 		case DisplayType_Shadows_no_reflection: 
-			color = shadeHitRT(prim, hit, skyboxColor, skyboxColor, uloc);
+			color = shadeHitFinalRecursionRT(prim, hit, uloc);
 			break;
 
 		case DisplayType_Dispatch_groups: {
@@ -143,6 +153,8 @@ void main() {
 			break;
 		}
 	}
+
+	#endif
 
 	//Exposure mapping
 

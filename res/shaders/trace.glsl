@@ -23,7 +23,8 @@ const uint
 	DisplayType_Reflection_material = 16,
 	DisplayType_Reflection_object = 17,
 	DisplayType_Reflection_intersection_side = 18,
-	DisplayType_Reflection_intersection_attributes = 19;
+	DisplayType_Reflection_intersection_attributes = 19,
+	DisplayType_Reflection_of_reflection = 20;
 
 const uint 
 	ProjectionType_Default = 0, 
@@ -62,6 +63,7 @@ layout(binding=0, std140) uniform GPUData {
 
 	uint planeCount;
 	uint displayType;
+	bool useSkybox;
 
 };
 
@@ -270,4 +272,21 @@ Ray calculatePrimary(const uvec2 loc) {
 				)
 			)
 		);
+}
+
+const vec2 invAtan = vec2(0.1591, 0.3183);
+
+vec2 sampleEquirect(const vec3 n) {
+	const vec2 uv = vec2(atan(n.x, n.z), asin(n.y * -1)) * invAtan;
+	return uv + 0.5;
+}
+
+layout(binding=1) uniform sampler2D skybox;
+
+vec3 sampleSkybox(const vec3 dir) {
+
+	if(!useSkybox)
+		return skyboxColor;
+
+	return texture(skybox, sampleEquirect(dir)).rgb;
 }

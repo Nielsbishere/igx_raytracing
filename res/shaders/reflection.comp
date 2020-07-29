@@ -2,7 +2,6 @@
 #extension GL_GOOGLE_include_directive : require
 #extension GL_ARB_gpu_shader_int64 : require
 #include "defines.glsl"
-#include "trace.glsl"
 #include "light.glsl"
 
 layout(binding=2, outputFormat) writeonly uniform image2D reflectionOutput;
@@ -52,7 +51,9 @@ void main() {
 	);
 	
 	Hit hit = traceGeometry(ray, primHit.object);
-	vec3 col = shadeHit(ray, hit, skyboxColor, skyboxColor);
+	vec3 col;
+	
+	#ifdef GRAPHICS_DEBUG
 
 	switch(displayType) {
 		
@@ -80,9 +81,24 @@ void main() {
 			col = vec3(mod(hit.intersection, 2), 0);
 			break;
 
+		case DisplayType_Reflection_of_reflection: {
+		
+			const vec3 v = ray.dir;
+			const float NdotV = max(dot(v, hit.normal), 0);
+
+			col = sampleSkybox(reflect(v, hit.normal));
+			break;
+		}
+
 		default:
-			col = shadeHit(ray, hit, skyboxColor, skyboxColor);
+
+	#endif
+
+			col = shadeHitFinalRecursion(ray, hit);
+
+	#ifdef GRAPHICS_DEBUG
 	}
+	#endif
 
 	imageStore(reflectionOutput, ivec2(loc), vec4(col, 0));
 }

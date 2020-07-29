@@ -39,7 +39,8 @@ oicExposedEnum(
 	Reflection_material,
 	Reflection_object,
 	Reflection_intersection_side,
-	Reflection_intersection_attributes
+	Reflection_intersection_attributes,
+	Reflection_of_reflection
 );
 
 oicExposedEnum(
@@ -66,7 +67,7 @@ struct RaytracingInterface : public ViewportInterface {
 	PrimitiveBufferRef mesh;
 	DescriptorsRef raytracingDescriptors;
 	PipelineRef raygenPipeline, initPipeline, shadowPipeline, postProcessing, reflectionPipeline;
-	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, tex2D;
+	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, skybox;
 	SamplerRef samp;
 
 	GPUBufferRef 
@@ -79,16 +80,12 @@ struct RaytracingInterface : public ViewportInterface {
 	Vec3f32 eye{ 4, 2, -2 }, eyeDir = { 0, 0, -1 };
 	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
 
-	SamplerRef samplerNearest;
+	SamplerRef samplerNearest, samplerLinear;
 
 	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = 70;
 
-	static constexpr usz sphereCount = 7;
-	static constexpr usz triCount = 3;
-	static constexpr usz cubeCount = 2;
-	static constexpr usz planeCount = 1;
-	static constexpr usz lightCount = 3;
+	static constexpr usz sphereCount = 7, triCount = 3, cubeCount = 2, planeCount = 1, lightCount = 3;
 
 	oic::Random r;
 
@@ -129,13 +126,14 @@ struct RaytracingInterface : public ViewportInterface {
 		f32 focalDistance;
 		f32 aperature;
 
-		bool disableUI; u8 padding[3];
+		bool disableUI; u8 padding0[3];
 		u32 triCount;
 		u32 sphereCount;
 		u32 cubeCount;
 
 		u32 planeCount;
 		DisplayType displayType;
+		bool enableSkybox; u8 padding1[3];
 
 		InflectWithName(
 			{
@@ -144,14 +142,16 @@ struct RaytracingInterface : public ViewportInterface {
 				"Exposure",
 				"Display time",
 				"Projection type",
-				"Interpupillary distance (mm)"
+				"Interpupillary distance (mm)",
+				"Enable skybox"
 			},
 			eye,
 			skyboxColor,
 			exposure,
 			displayType,
 			projectionType,
-			ipd
+			ipd,
+			enableSkybox
 		);
 
 	};
@@ -318,6 +318,14 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		samplerLinear = {
+			g, NAME("Linear sampler"),
+			Sampler::Info(
+				SamplerMin::LINEAR, SamplerMag::LINEAR,
+				SamplerMode::CLAMP_BORDER, 1
+			)
+		};
+
 		pipelineLayout = {
 
 			g, NAME("Raytracing pipeline layout"),
@@ -336,7 +344,8 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("Shadow output"), 10, GPUBufferType::STRUCTURED, 11, ShaderAccess::COMPUTE, sizeof(u32)),
 				RegisterLayout(NAME("HitBuffer"), 11, GPUBufferType::STRUCTURED, 13, ShaderAccess::COMPUTE, sizeof(Hit)),
 				RegisterLayout(NAME("UI"), 12, SamplerType::SAMPLER_MS, 0, ShaderAccess::COMPUTE),
-				RegisterLayout(NAME("Init"), 13, GPUBufferType::STORAGE, 14, ShaderAccess::COMPUTE, sizeof(InitData))
+				RegisterLayout(NAME("Init"), 13, GPUBufferType::STORAGE, 14, ShaderAccess::COMPUTE, sizeof(InitData)),
+				RegisterLayout(NAME("Skybox"), 14, SamplerType::SAMPLER_2D, 1, ShaderAccess::COMPUTE)
 			)
 		};
 
@@ -478,6 +487,7 @@ struct RaytracingInterface : public ViewportInterface {
 		gpuData->skyboxColor = { 0, 0.5f, 1 };
 		gpuData->exposure = 1;
 		gpuData->ipd = 6.2f;
+		gpuData->enableSkybox = true;
 
 		//Sphere y are inversed?
 
@@ -574,28 +584,9 @@ struct RaytracingInterface : public ViewportInterface {
 
 		//Create texture
 
-		const u32 rgba0[4][2] = {
-
-			{ 0xFFFF00FF, 0xFF00FFFF },	//1,0,1, 0,1,1
-			{ 0xFFFFFF00, 0xFFFFFFFF },	//1,1,0, 1,1,1
-
-			{ 0xFF7F007F, 0xFF7F0000 },	//.5,0,.5, .5,0,0
-			{ 0xFF7F7F7F, 0xFF007F00 }	//.5,.5,.5, 0,.5,0
-		};
-
-		const u32 rgba1[2][1] = {
-			{ 0xFFBFBFBF },				//0.75,0.75,0.75
-			{ 0xFF5F7F7F }				//0.375,0.5,0.5
-		};
-
-		tex2D = {
-			g, NAME("Test texture"),
-			Texture::Info(
-				List<Grid2D<u32>>{
-					rgba0, rgba1
-				},
-				GPUFormat::RGBA8, GPUMemoryUsage::LOCAL, 2
-			)
+		skybox = {
+			g, NAME("Skybox"),
+			igxi::Helper::loadDiskExternal("./textures/cape_hill_4k.hdr", g)
 		};
 
 		//Create sampler
@@ -616,6 +607,7 @@ struct RaytracingInterface : public ViewportInterface {
 		descriptorsInfo.resources[6] = { lightData, 0 };
 		descriptorsInfo.resources[7] = { cubeData, 0 };
 		descriptorsInfo.resources[13] = { initData, 0 };
+		descriptorsInfo.resources[14] = { samplerLinear, skybox, TextureType::TEXTURE_2D };
 
 		raytracingDescriptors = {
 			g, NAME("Raytracing descriptors"),
@@ -784,7 +776,7 @@ struct RaytracingInterface : public ViewportInterface {
 			FlushBuffer(sphereData, uploadBuffer),
 			FlushBuffer(mesh, uploadBuffer),
 			FlushBuffer(initData, uploadBuffer),
-			FlushImage(tex2D, uploadBuffer),
+			FlushImage(skybox, uploadBuffer),
 
 			//Prepare all shaders
 
@@ -821,8 +813,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (modified & 1) {
 
-			Buffer raygenComp;
-			oicAssert("Couldn't load raygen shader", oic::System::files()->read(pipelines[0], raygenComp));
+			Buffer raygenComp = oic::System::files()->readToBuffer(pipelines[0]);
 
 			raygenPipeline.release();
 			raygenPipeline = {
@@ -838,8 +829,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (modified & 2) {
 
-			Buffer initShader;
-			oicAssert("Couldn't load init shader", oic::System::files()->read(pipelines[1], initShader));
+			Buffer initShader = oic::System::files()->readToBuffer(pipelines[1]);
 
 			initPipeline.release();
 			initPipeline = {
@@ -855,8 +845,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (modified & 4) {
 
-			Buffer shadow;
-			oicAssert("Couldn't load shadow shader", oic::System::files()->read(pipelines[2], shadow));
+			Buffer shadow = oic::System::files()->readToBuffer(pipelines[2]);
 
 			shadowPipeline.release();
 			shadowPipeline = {
@@ -872,8 +861,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (modified & 8) {
 
-			Buffer postProcess;
-			oicAssert("Couldn't load post_processing shader", oic::System::files()->read(pipelines[3], postProcess));
+			Buffer postProcess = oic::System::files()->readToBuffer(pipelines[3]);
 
 			postProcessing.release();
 			postProcessing = {
@@ -889,8 +877,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (modified & 16) {
 
-			Buffer reflectionShader;
-			oicAssert("Couldn't load reflection shader", oic::System::files()->read(pipelines[4], reflectionShader));
+			Buffer reflectionShader = oic::System::files()->readToBuffer(pipelines[4]);
 
 			reflectionPipeline.release();
 			reflectionPipeline = {
@@ -927,7 +914,7 @@ struct RaytracingInterface : public ViewportInterface {
 		igxi.format.push_back(image->getInfo().format);
 		igxi.data.push_back({ result->readback(allocation, image->size()) });
 
-		igxi::Helper::toDiskExternalFormat(igxi, targetOutput);
+		igxi::Helper::toDiskExternal(igxi, targetOutput);
 	}
 
 	void render(const ViewportInfo *vi) final override {

@@ -1,4 +1,3 @@
-#include "trace.glsl"
 #include "light.glsl"
 
 layout(binding=11, std430) readonly buffer ShadowOutput32 {
@@ -58,15 +57,30 @@ vec3 shadeRT(
 	return (m.ambient + kD / pi) * m.albedo + kS * reflected + lighting + m.emissive;
 }
 
-vec3 shadeHitRT(Ray ray, Hit hit, vec3 reflection, vec3 missColor, const uvec2 loc) {
+vec3 shadeHitRT(Ray ray, Hit hit, vec3 reflection, const uvec2 loc) {
 
 	if(hit.hitT == noHit)
-		return vec3(missColor);
+		return vec3(sampleSkybox(ray.dir));
 
 	const vec3 position = ray.pos + ray.dir * hit.hitT;
 	
-	const vec3 v = normalize(position - eye);
-	const float NdotV = max(dot(-hit.normal, v), 0);
+	const vec3 v = ray.dir;
+	const float NdotV = max(dot(v, -hit.normal), 0);
 
 	return shadeRT(materials[hit.material], position, hit.normal, v, NdotV, reflection, loc);
+}
+
+vec3 shadeHitFinalRecursionRT(Ray ray, Hit hit, const uvec2 loc) {
+
+	if(hit.hitT == noHit)
+		return vec3(sampleSkybox(ray.dir));
+
+	const vec3 position = ray.pos + ray.dir * hit.hitT;
+	
+	const vec3 v = ray.dir;
+	const float NdotV = max(dot(v, -hit.normal), 0);
+
+	const vec3 reflected = sampleSkybox(reflect(v, hit.normal));
+
+	return shadeRT(materials[hit.material], position, hit.normal, v, NdotV, reflected, loc);
 }
