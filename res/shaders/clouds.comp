@@ -1,0 +1,33 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "defines.glsl"
+#include "trace.glsl"
+
+layout(binding=3, r16f) writeonly uniform image2D cloutput;
+
+layout(binding=13, std140) readonly buffer HitBuffer {
+	Hit hitBuffer[];
+};
+
+layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
+
+const float 
+	cloudStart = 1500, 
+	cloudEnd = 12200, 
+	cloudRange = cloudEnd - cloudStart,
+	cloudMaxDist = 18532.943359375;			//sqrt(3 * cloudRange * cloudRange)
+
+void main() {
+
+	//Generate primaries
+	
+	const uvec2 loc = gl_GlobalInvocationID.xy;
+
+	if(loc.x >= width || loc.y >= height)
+		return;
+
+	const uint loc1D = loc.x + loc.y * width;
+	const Ray ray = calculatePrimary(loc);
+
+	imageStore(cloutput, ivec2(loc), vec4(0));
+}

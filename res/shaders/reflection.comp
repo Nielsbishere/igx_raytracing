@@ -73,10 +73,6 @@ void main() {
 			col = vec3(float(hit.hitT != noHit ? hit.object + 1 : 0) / (1 + triangleCount + sphereCount + cubeCount + planeCount));
 			break;
 
-		case DisplayType_Reflection_intersection_side:
-			col = vec3((floor(hit.intersection.xy) - 2) / 6, 0);
-			break;
-
 		case DisplayType_Reflection_intersection_attributes:
 			col = vec3(mod(hit.intersection, 2), 0);
 			break;

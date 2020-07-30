@@ -15,16 +15,15 @@ const uint
 	DisplayType_UI_Only = 8,
 	DisplayType_Material = 9,
 	DisplayType_Object = 10,
-	DisplayType_Intersection_side = 11,
-	DisplayType_Shadows_no_reflection = 12,
-	DisplayType_Dispatch_groups = 13,
-	DisplayType_Reflection_albedo = 14,
-	DisplayType_Reflection_normals = 15,
-	DisplayType_Reflection_material = 16,
-	DisplayType_Reflection_object = 17,
-	DisplayType_Reflection_intersection_side = 18,
-	DisplayType_Reflection_intersection_attributes = 19,
-	DisplayType_Reflection_of_reflection = 20;
+	DisplayType_Shadows_no_reflection = 11,
+	DisplayType_Dispatch_groups = 12,
+	DisplayType_Reflection_albedo = 13,
+	DisplayType_Reflection_normals = 14,
+	DisplayType_Reflection_material = 15,
+	DisplayType_Reflection_object = 16,
+	DisplayType_Reflection_intersection_attributes = 17,
+	DisplayType_Reflection_of_reflection = 18,
+	DisplayType_Clouds = 19;
 
 const uint 
 	ProjectionType_Default = 0, 
@@ -133,7 +132,6 @@ Hit traceGeometry(const Ray ray, uint prevHit) {
 		if(rayIntersectTri(ray, triangles[i], hit, i + j, prevHit)) {
 			hit.material = triangles[i].material;
 			hit.object = i + j;
-			hit.normal = normalize(cross(triangles[i].p1 - triangles[i].p0, triangles[i].p2 - triangles[i].p0));
 		}
 	}
 

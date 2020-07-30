@@ -9,6 +9,7 @@ layout(binding=0, rgba8) uniform image2D rayOutput;
 layout(binding=1, rgba32f) uniform image2D accumulationBuffer;
 layout(binding=2, outputFormat) readonly uniform image2D reflectionOutput;
 layout(binding=0) uniform sampler2DMS ui;
+layout(binding=3, r16f) readonly uniform image2D cloutput;
 
 layout(binding=13, std140) readonly buffer HitBuffer {
 	Hit hitBuffer[];
@@ -45,8 +46,13 @@ void main() {
 	switch(displayType) {
 
 		case DisplayType_Default: {
+
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
 			color = shadeHitRT(prim, hit, reflectionColor, uloc);
+
+			float cloud = imageLoad(cloutput, loc).r;
+
+			color = mix(color, cloud.rrr, cloud);
 			break;
 		}
 
@@ -56,6 +62,10 @@ void main() {
 
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
 			color = shadeHitRT(prim, hit, reflectionColor, uloc);
+			
+			float cloud = imageLoad(cloutput, loc).r;
+
+			color = mix(color, cloud.rrr, cloud);
 		
 			if(sampleCount > 1)
 				color += imageLoad(accumulationBuffer, loc).rgb;
@@ -78,7 +88,7 @@ void main() {
 			break;
 
 		case DisplayType_Albedo:
-			color = hit.hitT != noHit ?  materials[hit.material].albedo : sky;
+			color = hit.hitT != noHit ?  materials[hit.material].albedo : vec3(0);
 			break;
 
 		case DisplayType_Light_buffer: {
@@ -106,15 +116,21 @@ void main() {
 		case DisplayType_Reflection_normals:
 		case DisplayType_Reflection_material:
 		case DisplayType_Reflection_object:
-		case DisplayType_Reflection_intersection_side:
 		case DisplayType_Reflection_intersection_attributes:
 		case DisplayType_Reflection_of_reflection:
 			color = imageLoad(reflectionOutput, loc).rgb;
 			break;
 
-		case DisplayType_No_secondaries:
+		case DisplayType_No_secondaries: {
+
 			color = shadeHitFinalRecursion(prim, hit);
+
+			float cloud = imageLoad(cloutput, loc).r;
+
+			color = mix(color, cloud.rrr, cloud);
+
 			break;
+		}
 
 		case DisplayType_UI_Only:
 			color = vec3(0);
@@ -126,10 +142,6 @@ void main() {
 
 		case DisplayType_Object:
 			color = vec3(float(hit.hitT != noHit ? hit.object + 1 : 0) / (1 + triangleCount + sphereCount + cubeCount + planeCount));
-			break;
-
-		case DisplayType_Intersection_side:
-			color = vec3((floor(hit.intersection.xy) - 2) / 6, 0);
 			break;
 
 		case DisplayType_Shadows_no_reflection: 
@@ -152,6 +164,10 @@ void main() {
 			color = vec3((tilePos & 255) / 255.0, ((tilePos >> 8) & 255) / 255.0, ((tilePos >> 16) & 255) / 255.0);
 			break;
 		}
+
+		case DisplayType_Clouds:
+			color = vec3(imageLoad(cloutput, loc).rrr);
+			break;
 	}
 
 	#endif

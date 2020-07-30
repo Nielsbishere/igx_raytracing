@@ -1,7 +1,6 @@
 
 const float noHit = 3.4028235e38;
 const float epsilon = 1e-4;		//epsilon for offsets
-const float delta = 1e-3;		//epsilon for calculations
 
 const uint shadowHit = 0xFFFFFFFF;		//loc1D is set to this when a shadow hit
 const uint noRayHit = 0xFFFFFFFF;		//loc1D is set to this when a primary didn't hit
@@ -96,7 +95,7 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint obj,
 		//We then * 0.5 + 0.5 to get a uv in that representation
 		//if lat == NaN && lon == NaN: x = 1 or x = -1
 
-		hit.intersection = vec2(latitude, longitude) * (0.636619746685 * 0.5) + 2.5;
+		hit.intersection = vec2(latitude, longitude) * (0.636619746685 * 0.5) + 0.5;
 
 		return true;
 	}
@@ -107,23 +106,23 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint obj,
 bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint obj, uint prevObj) {
 
 	vec3 dir = normalize(plane.xyz);
-	float dif = dot(r.dir, dir);
+	float dif = dot(r.dir, -dir);
 
 	//TODO: dif == 0 shouldn't be a problem
 
-	float hitT = -(dot(r.pos, dir) + plane.w) / dif;
+	float hitT = -(dot(r.pos, -dir) + plane.w) / dif;
 
-	if(hitT >= delta && obj != prevObj && hitT < hit.hitT) {
+	if(hitT >= 0 && obj != prevObj && hitT < hit.hitT) {
 
 		hit.hitT = hitT;
-		hit.normal = dif < 0 ? -dir : dir;
+		hit.normal = dif > 0 ? -dir : dir;
 
 		vec3 o = hitT * r.dir + r.pos;
 
 		vec3 planeX = cross(plane.xyz, vec3(0, 0, 1));
 		vec3 planeZ = cross(plane.xyz, vec3(1, 0, 0));
 
-		hit.intersection = fract(vec2(dot(o, planeX), dot(o, planeZ))) + vec2(int(dif < 0) << 1, 0) + 2;
+		hit.intersection = vec2(dot(o, planeX), dot(o, planeZ));
 
 		return true;
 	}
@@ -141,7 +140,7 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint obj, u
 	const vec3 h = cross(r.dir, p2_p0);
 	const float a = dot(p1_p0, h);
 	
-	if (abs(a) < delta) return false;
+	if (abs(a) < 0) return false;
 	
 	const float f = 1 / a;
 	const vec3 s = r.pos - tri.p0;
@@ -156,10 +155,12 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint obj, u
 	
 	const float t = f * dot(p2_p0, q);
 	
-	if (t <= delta || obj == prevObj || t >= 1 / delta || t >= hit.hitT) return false;
+	if (t <= 0 || obj == prevObj || t >= hit.hitT) return false;
 
-	hit.intersection = vec2(u + (int(sign(a)) << 1), v) + 2;
+	hit.intersection = vec2(u, v);
 	hit.hitT = t;
+	hit.normal = normalize(cross(tri.p1 - tri.p0, tri.p2 - tri.p0)) * -sign(a);
+
 	return true;
 }
 
@@ -188,19 +189,19 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint obj, uin
 	if(tmin == mi.x) {
 		int isLeft = int(mi.x == startDir.x);
 		hit.normal = vec3(isLeft * 2 - 1, 0, 0);
-		hit.intersection = pos.yz + vec2(isLeft * 3 + 2, 0) + 2;
+		hit.intersection = pos.yz;
 	}
 
 	else if(tmin == mi.y) {
 		int isDown = int(mi.y == startDir.y);
 		hit.normal = vec3(0, isDown * 2 - 1, 0);
-		hit.intersection = pos.xz + vec2(isDown + 3, 0) + 2;
+		hit.intersection = pos.xz;
 	}
 
 	else {
 		int isBack = int(mi.z == startDir.z);
 		hit.normal = vec3(0, 0, isBack * 2 - 1);
-		hit.intersection = pos.xy + vec2(isBack * 5 + 1, 0) + 2;
+		hit.intersection = pos.xy;
 	}
 
 	//

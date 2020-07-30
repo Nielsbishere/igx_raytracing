@@ -31,16 +31,15 @@ oicExposedEnum(
 	Intersection_attributes, Normals, Albedo,
 	Light_buffer, Reflection_buffer, No_secondaries,
 	UI_Only, Material, Object,
-	Intersection_side,
 	Shadows_no_reflection,
 	Dispatch_groups,
 	Reflection_albedo,
 	Reflection_normals,
 	Reflection_material,
 	Reflection_object,
-	Reflection_intersection_side,
 	Reflection_intersection_attributes,
-	Reflection_of_reflection
+	Reflection_of_reflection,
+	Clouds
 );
 
 oicExposedEnum(
@@ -66,13 +65,13 @@ struct RaytracingInterface : public ViewportInterface {
 	CommandListRef cl;
 	PrimitiveBufferRef mesh;
 	DescriptorsRef raytracingDescriptors;
-	PipelineRef raygenPipeline, initPipeline, shadowPipeline, postProcessing, reflectionPipeline;
-	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, skybox;
+	PipelineRef raygenPipeline, initPipeline, shadowPipeline, clouds, postProcessing, reflectionPipeline;
+	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, cloutput, skybox;
 	SamplerRef samp;
 
 	GPUBufferRef 
 		rayConstData, sphereData, planeData, triangleData, lightData,
-		materialData, cubeData, shadowOutput, gbuffer, initData;
+		materialData, cubeData, initData, shadowOutput, gbuffer;
 
 	UploadBufferRef uploadBuffer;
 
@@ -91,12 +90,13 @@ struct RaytracingInterface : public ViewportInterface {
 
 	u8 pipelineUpdates{};
 
-	String pipelines[5] = {
+	String pipelines[6] = {
 		"./shaders/raygen.comp.spv",
 		"./shaders/init.comp.spv",
 		"./shaders/shadow.comp.spv",
 		"./shaders/post_processing.comp.spv",
-		"./shaders/reflection.comp.spv"
+		"./shaders/reflection.comp.spv",
+		"./shaders/clouds.comp.spv"
 	};
 
 	struct InitData {
@@ -345,7 +345,8 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("HitBuffer"), 11, GPUBufferType::STRUCTURED, 13, ShaderAccess::COMPUTE, sizeof(Hit)),
 				RegisterLayout(NAME("UI"), 12, SamplerType::SAMPLER_MS, 0, ShaderAccess::COMPUTE),
 				RegisterLayout(NAME("Init"), 13, GPUBufferType::STORAGE, 14, ShaderAccess::COMPUTE, sizeof(InitData)),
-				RegisterLayout(NAME("Skybox"), 14, SamplerType::SAMPLER_2D, 1, ShaderAccess::COMPUTE)
+				RegisterLayout(NAME("Skybox"), 14, SamplerType::SAMPLER_2D, 1, ShaderAccess::COMPUTE),
+				RegisterLayout(NAME("Cloutput"), 15, TextureType::TEXTURE_2D, 3, ShaderAccess::COMPUTE, GPUFormat::R16f, true)
 			)
 		};
 
@@ -499,7 +500,7 @@ struct RaytracingInterface : public ViewportInterface {
 		};
 
 		Vec4f32 planes[planeCount] = {
-			Vec4f32(0, -1, 0, 0)
+			Vec4f32(0, 1, 0, 0)
 		};
 
 		planeData = {
@@ -723,6 +724,16 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		cloutput.release();
+		cloutput = {
+			g, NAME("Cloutput"),
+			Texture::Info(
+				size.cast<Vec2u16>(), 
+				GPUFormat::R16f, GPUMemoryUsage::GPU_WRITE_ONLY, 
+				1, 1
+			)
+		};
+
 		constexpr Vec2f32 perTile = Vec2f32(THREADS_X, 64 / THREADS_X);
 
 		Vec2u16 tiles = (size.cast<Vec2f32>() / perTile).ceil().cast<Vec2u16>();
@@ -751,7 +762,8 @@ struct RaytracingInterface : public ViewportInterface {
 		raytracingDescriptors->updateDescriptor(10, { shadowOutput, 0 });
 		raytracingDescriptors->updateDescriptor(11, { gbuffer, 0 });
 		raytracingDescriptors->updateDescriptor(12, { samplerNearest, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS });
-		raytracingDescriptors->flush({ { 0, 1 }, { 8, 5 } });
+		raytracingDescriptors->updateDescriptor(15, { cloutput, TextureType::TEXTURE_2D });
+		raytracingDescriptors->flush({ { 0, 1 }, { 8, 5 }, { 15, 1 } });
 
 		if(!isResizeRequested)
 			swapchain->onResize(size);
@@ -793,6 +805,11 @@ struct RaytracingInterface : public ViewportInterface {
 
 			BindPipeline(shadowPipeline),
 			Dispatch(Vec3u32(res.x, res.y, lightCount)),
+
+			//Clouds
+
+			BindPipeline(clouds),
+			Dispatch(res.cast<Vec2u32>()),
 
 			//Reflections
 
@@ -885,6 +902,22 @@ struct RaytracingInterface : public ViewportInterface {
 				Pipeline::Info(
 					Pipeline::Flag::NONE,
 					reflectionShader,
+					pipelineLayout,
+					Vec3u32{ THREADS_X, THREADS_Y, 1 }
+				)
+			};
+		}
+
+		if (modified & 32) {
+
+			Buffer cloudShader = oic::System::files()->readToBuffer(pipelines[5]);
+
+			clouds.release();
+			clouds = {
+				g, NAME("Clouds pipeline"),
+				Pipeline::Info(
+					Pipeline::Flag::NONE,
+					cloudShader,
 					pipelineLayout,
 					Vec3u32{ THREADS_X, THREADS_Y, 1 }
 				)
