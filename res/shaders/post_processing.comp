@@ -9,10 +9,28 @@ layout(binding=0, rgba8) uniform image2D rayOutput;
 layout(binding=1, rgba32f) uniform image2D accumulationBuffer;
 layout(binding=2, outputFormat) readonly uniform image2D reflectionOutput;
 layout(binding=0) uniform sampler2DMS ui;
-layout(binding=3, r16f) readonly uniform image2D cloutput;
+layout(binding=3, rgba16f) readonly uniform image2D cloutput;
 
 layout(binding=13, std140) readonly buffer HitBuffer {
 	Hit hitBuffer[];
+};
+
+//Debugging for worley
+
+layout(binding=3) uniform sampler3D worleySampler;
+
+layout(binding=1, std140) uniform WorleyData {
+
+	uvec3 targetRes;
+	float offsetX;
+
+	uvec3 pointsRes;
+	float offsetY;
+
+	float offsetZ;
+	bool isInverted;
+	float worleyLayer;
+
 };
 
 //Handling shading, etc.
@@ -28,6 +46,7 @@ void main() {
 	if(loc.x >= width || loc.y >= height) return;
 
 	const uvec2 uloc = ivec2(gl_GlobalInvocationID.xy);
+	const vec2 asUv = (vec2(loc) + 0.5) / vec2(width, height);
 	
 	//Calculate hit
 
@@ -50,9 +69,9 @@ void main() {
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
 			color = shadeHitRT(prim, hit, reflectionColor, uloc);
 
-			float cloud = imageLoad(cloutput, loc).r;
+			vec4 cloud = imageLoad(cloutput, loc);
 
-			color = mix(color, cloud.rrr, cloud);
+			color = mix(color, cloud.rgb, cloud.a);
 			break;
 		}
 
@@ -63,9 +82,9 @@ void main() {
 			const vec3 reflectionColor = imageLoad(reflectionOutput, loc).rgb;
 			color = shadeHitRT(prim, hit, reflectionColor, uloc);
 			
-			float cloud = imageLoad(cloutput, loc).r;
+			vec4 cloud = imageLoad(cloutput, loc);
 
-			color = mix(color, cloud.rrr, cloud);
+			color = mix(color, cloud.rgb, cloud.a);
 		
 			if(sampleCount > 1)
 				color += imageLoad(accumulationBuffer, loc).rgb;
@@ -125,9 +144,9 @@ void main() {
 
 			color = shadeHitFinalRecursion(prim, hit);
 
-			float cloud = imageLoad(cloutput, loc).r;
+			vec4 cloud = imageLoad(cloutput, loc);
 
-			color = mix(color, cloud.rrr, cloud);
+			color = mix(color, cloud.rgb, cloud.a);
 
 			break;
 		}
@@ -166,7 +185,11 @@ void main() {
 		}
 
 		case DisplayType_Clouds:
-			color = vec3(imageLoad(cloutput, loc).rrr);
+			color = vec3(imageLoad(cloutput, loc).rgb);
+			break;
+
+		case DisplayType_Worley:
+			color = vec3(texture(worleySampler, vec3(asUv * 4, worleyLayer / float(targetRes.z))).rrr);
 			break;
 	}
 
@@ -177,7 +200,7 @@ void main() {
 	if(any(isnan(color)))				//TODO: Why is diffuse NaN? invalid shadeHit
 		color = vec3(0, 0, 10000);
 
-	color = vec3(1, 1, 1) - exp(-color * exposure);
+	color = max(vec3(1, 1, 1) - exp(-color * exposure), vec3(0));
 
 	//Blend with UI
 

@@ -1,0 +1,73 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "defines.glsl"
+#include "trace.glsl"
+
+//We read random noise for each point and convert it to worley
+
+layout(binding=2) uniform sampler3D pointSampler;
+layout(binding=5, r32f) writeonly uniform image3D worleyOutput;
+
+layout(binding=1, std140) uniform WorleyData {
+
+	uvec3 targetRes;
+	float offsetX;
+
+	uvec3 pointsRes;
+	float offsetY;
+
+	float offsetZ;
+	bool isInverted;
+	float worleyLayer;
+
+};
+
+layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
+
+void main() {
+
+	//Generate primaries
+	
+	const uvec3 loc = gl_GlobalInvocationID;
+
+	if(any(greaterThanEqual(loc, targetRes)))
+		return;
+
+	const vec3 floc = vec3(loc) + 0.5;
+
+	const vec3 invTargetRes = 1 / vec3(targetRes);
+	const vec3 invPointRes = 1 / vec3(pointsRes);
+
+	const vec3 pointPerPixel = pointsRes * invTargetRes;
+
+	const vec3 currentPoint = floor(floc * pointPerPixel);
+	const vec3 pixelPerPoint = targetRes * invPointRes;
+
+	//Get the current point and the points in the neighboring cells
+	//Get the minimum distance between them
+
+	float squareDist = 1;
+
+	for(int k = -1; k <= 1; ++k)
+		for(int j = -1; j <= 1; ++j)
+			for(int i = -1; i <= 1; ++i) {
+
+				vec3 local = vec3(i, j, k);
+				vec3 global = currentPoint + local;
+
+				vec3 sampledOffset = texture(pointSampler, (global + 0.5) * invPointRes).rgb;
+
+				global += sampledOffset;
+
+				vec3 localPoint = (global * pixelPerPoint - floc) * pointPerPixel;
+				float localSquareDist = dot(localPoint, localPoint);
+
+				squareDist = min(squareDist, localSquareDist);
+			}
+
+	float dist = sqrt(squareDist);
+
+	if(isInverted) dist = 1 - dist;
+
+	imageStore(worleyOutput, ivec3(loc), dist.rrrr);
+}

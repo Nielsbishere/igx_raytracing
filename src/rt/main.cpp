@@ -39,7 +39,8 @@ oicExposedEnum(
 	Reflection_object,
 	Reflection_intersection_attributes,
 	Reflection_of_reflection,
-	Clouds
+	Clouds,
+	Worley
 );
 
 oicExposedEnum(
@@ -65,13 +66,12 @@ struct RaytracingInterface : public ViewportInterface {
 	CommandListRef cl;
 	PrimitiveBufferRef mesh;
 	DescriptorsRef raytracingDescriptors;
-	PipelineRef raygenPipeline, initPipeline, shadowPipeline, clouds, postProcessing, reflectionPipeline;
-	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, cloutput, skybox;
+	TextureRef raytracingOutput, raytracingAccumulation, reflectionBuffer, cloutput, skybox, worleyPoints, worleyOutput;
 	SamplerRef samp;
 
 	GPUBufferRef 
 		rayConstData, sphereData, planeData, triangleData, lightData,
-		materialData, cubeData, initData, shadowOutput, gbuffer;
+		materialData, cubeData, initData, shadowOutput, gbuffer, worleyData;
 
 	UploadBufferRef uploadBuffer;
 
@@ -79,25 +79,45 @@ struct RaytracingInterface : public ViewportInterface {
 	Vec3f32 eye{ 4, 2, -2 }, eyeDir = { 0, 0, -1 };
 	Mat4x4f32 v = Mat4x4f32::lookDirection(eye, eyeDir, { 0, 1, 0 });
 
-	SamplerRef samplerNearest, samplerLinear;
+	SamplerRef samplerNearest, samplerLinear, wrapPointSampler, wrapLinearSampler;
 
 	f64 speed = 5, fovChangeSpeed = 7;
 	f32 fov = 70;
 
-	static constexpr usz sphereCount = 7, triCount = 3, cubeCount = 2, planeCount = 1, lightCount = 3;
+	static constexpr usz 
+		sphereCount = 7, triCount = 3, cubeCount = 2, planeCount = 1, 
+		directionalLightCount = 1, pointLightCount = 2, spotLightCount = 0,
+		geometryCount = sphereCount + triCount + cubeCount + planeCount,
+		lightCount = directionalLightCount + pointLightCount + spotLightCount;
 
 	oic::Random r;
 
 	u8 pipelineUpdates{};
 
-	String pipelines[6] = {
+	enum PipelineType : u8 {
+		RAYGEN,
+		INIT,
+		SHADOW,
+		POST_PROCESS,
+		REFLECTION,
+		CLOUDS,
+		WORLEY_DIST,
+		WORLEY,
+		PIPELINE_COUNT
+	};
+
+	String pipelinePaths[PIPELINE_COUNT] = {
 		"./shaders/raygen.comp.spv",
 		"./shaders/init.comp.spv",
 		"./shaders/shadow.comp.spv",
 		"./shaders/post_processing.comp.spv",
 		"./shaders/reflection.comp.spv",
-		"./shaders/clouds.comp.spv"
+		"./shaders/clouds.comp.spv",
+		"./shaders/worley_distribute.comp.spv",
+		"./shaders/worley.comp.spv"
 	};
+
+	PipelineRef pipelines[_countof(pipelinePaths)];
 
 	struct InitData {
 		f32 randomX, randomY;
@@ -134,6 +154,11 @@ struct RaytracingInterface : public ViewportInterface {
 		u32 planeCount;
 		DisplayType displayType;
 		bool enableSkybox; u8 padding1[3];
+		u32 lightCount;
+
+		u32 directionalLightCount;
+		u32 pointLightCount;
+		u32 spotLightCount;
 
 		InflectWithName(
 			{
@@ -254,19 +279,114 @@ struct RaytracingInterface : public ViewportInterface {
 
 	};
 
+	struct WorleyData {
+
+		Vec3u32 worleyRes{};
+		f32 offsetX{};
+
+		Vec3u32 pointsRes{};
+		f32 offsetY{};
+
+		f32 offsetZ{};
+		bool isInverted = true;	u8 padding[3]{};
+		f32 visibleLayer{};
+		f32 cloudA = 20;
+		Vec3f32 cloudScale = Vec3f32(4.f, 3.2f, 4.f);
+		f32 cloudB = 61;
+
+		Vec3f32 cloudOffset{};
+		f32 cloudThreshold = 0.43f;
+
+		f32 cloudMultiplier = 0.166f;
+		u32 cloudSamples = 32;
+		f32 windSpeed = 1;
+		u32 pad;
+
+		Vec2f32 windDirection = Vec2f32(0.01f, 1);
+		float cloudAbsorption = 1;
+		u32 lightSamples = 4;
+
+		InflectWithName(
+			{ 
+				"Displayed layer",
+				"Is inverted",
+				"Seed",
+
+				"Cloud first height",
+				"Cloud second height",
+
+				"Cloud scale x",
+				"Cloud scale y",
+				"Cloud scale z",
+
+				"Cloud offset x",
+				"Cloud offset y",
+				"Cloud offset z",
+
+				"Cloud threshold",
+
+				"Cloud multiplier",
+				"Cloud samples",
+
+				"Wind speed",
+				"Wind direction x",
+				"Wind direction z",
+
+				"Cloud absorption",
+				"Light samples"
+			},
+
+			(Slider<f32, 0, 512>&) visibleLayer,
+			isInverted,
+
+			Vec3f32(offsetX, offsetY, offsetZ),
+
+			cloudA,
+			cloudB,
+
+			(Slider<f32, 0.1f, 16>&) cloudScale.x,
+			(Slider<f32, 0.1f, 16>&) cloudScale.y,
+			(Slider<f32, 0.1f, 16>&) cloudScale.z,
+
+			cloudOffset.x,
+			(Slider<f32, -1e2f, 1e2f>&) cloudOffset.y,
+			cloudOffset.z,
+
+			(Slider<f32, 1e-4f, 1>&) cloudThreshold,
+			(Slider<f32, 1e-4f, 3>&) cloudMultiplier,
+			(Slider<u32, 1, 64>&) cloudSamples,
+
+			(Slider<f32, 0.1f, 10>&) windSpeed,
+			(Slider<f32, -1, 1>&) windDirection.x,
+			(Slider<f32, -1, 1>&) windDirection.y,
+
+			(Slider<f32, 1e-4f, 1>&) cloudAbsorption,
+			(Slider<u32, 1, 16>&) lightSamples
+		);
+
+	};
+
 	//GPU data
 	PipelineLayoutRef pipelineLayout;
 
-	//
+	//Access to CBuffers
 
 	GPUData *gpuData{};
 	InitData *initDataBuf{};
+	WorleyData *worleyDat{}, prevWorleyDat{};
+
+	//
 
 	Vec2u16 targetSize = { 7680, 4320 };
 	u16 targetSamples = 64;
 
+	Vec3f32 worleyScale = 0.1f;
+	Vec3f32 worleyScaleOld{};
+
 	bool shouldOutputNextFrame{};
-	bool isResizeRequested{};
+	bool isResizeRequested{}, didWorleyChange = true;
+
+	static constexpr Vec3u32 worleySize = 128;
 
 	String targetOutput = "./output/0";
 
@@ -278,25 +398,58 @@ struct RaytracingInterface : public ViewportInterface {
 		(u32&) initDataBuf->sampleCount = 0;
 	}
 
+	void seedWorley() const {
+		((RaytracingInterface*)this)->worleySeed();
+	}
+
+	struct Noise {
+
+		Vec3f32 *worleyScale;
+		WorleyData *worleyData;
+
+		Noise(Vec3f32 *worleyScale, WorleyData *worleyData):
+			worleyScale(worleyScale),
+			worleyData(worleyData) {}
+
+		InflectWithName(
+			{ "Points x", "Points y", "Points z", "" },
+			(Slider<f32, 1e-4, 0.5f>&) worleyScale->x,
+			(Slider<f32, 1e-4, 0.5f>&) worleyScale->y,
+			(Slider<f32, 1e-4, 0.5f>&) worleyScale->z,
+			*worleyData
+		)
+
+	};
+
 	InflectWithName(
-		{ 
-			"", 
-			"FOV", "FOV Change speed", 
-			"Eye dir", "Move speed", 
+		{
+			"",
+			"FOV", "FOV Change speed",
+			"Eye dir", "Move speed",
 			"View matrix",
 			"Target size", "Target samples",
 			"Target output path (relative to ./)",
 			"Output next frame",
-			"Reset accumulation samples"
-		}, 
-		*gpuData, 
-		fov, fovChangeSpeed, 
-		eyeDir, speed, 
-		(const Mat4x4f32&) v,
+			"Reset accumulation samples",
+			"Noise",
+			"Reseed noise"
+		},
+		*gpuData,
+		fov, fovChangeSpeed,
+		eyeDir, speed,
+		(const Mat4x4f32 &)v,
 		targetSize, targetSamples,
 		targetOutput,
+
 		Button<RaytracingInterface, &RaytracingInterface::outputNextFrame>{},
-		Button<RaytracingInterface, &RaytracingInterface::resetSamples>{}
+		Button<RaytracingInterface, &RaytracingInterface::resetSamples>{},
+
+		Noise(
+			&worleyScale,
+			worleyDat
+		),
+
+		Button<RaytracingInterface, &RaytracingInterface::seedWorley>{}
 	);
 
 	//UI
@@ -326,6 +479,25 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		wrapLinearSampler = {
+			g, NAME("Wrap linear sampler"),
+			Sampler::Info(
+				SamplerMin::LINEAR, SamplerMag::LINEAR,
+				SamplerMode::REPEAT, 1
+			)
+		};
+
+		wrapPointSampler = {
+			g, NAME("Wrap point sampler"),
+			Sampler::Info(
+				SamplerMin::NEAREST, SamplerMag::NEAREST,
+				SamplerMode::REPEAT, 1
+			)
+		};
+
+		//TODO: Texture loading generates Inf due to val > f16_MAX
+		//TODO: Worley is triggered even though nothing changed
+
 		pipelineLayout = {
 
 			g, NAME("Raytracing pipeline layout"),
@@ -346,7 +518,12 @@ struct RaytracingInterface : public ViewportInterface {
 				RegisterLayout(NAME("UI"), 12, SamplerType::SAMPLER_MS, 0, ShaderAccess::COMPUTE),
 				RegisterLayout(NAME("Init"), 13, GPUBufferType::STORAGE, 14, ShaderAccess::COMPUTE, sizeof(InitData)),
 				RegisterLayout(NAME("Skybox"), 14, SamplerType::SAMPLER_2D, 1, ShaderAccess::COMPUTE),
-				RegisterLayout(NAME("Cloutput"), 15, TextureType::TEXTURE_2D, 3, ShaderAccess::COMPUTE, GPUFormat::R16f, true)
+				RegisterLayout(NAME("Cloutput"), 15, TextureType::TEXTURE_2D, 3, ShaderAccess::COMPUTE, GPUFormat::RGBA16f, true),
+				RegisterLayout(NAME("Worley data"), 16, GPUBufferType::UNIFORM, 1, ShaderAccess::COMPUTE, sizeof(WorleyData)),
+				RegisterLayout(NAME("Worley points"), 17, TextureType::TEXTURE_3D, 4, ShaderAccess::COMPUTE, GPUFormat::RGBA8, true),
+				RegisterLayout(NAME("Worley point sampler"), 18, SamplerType::SAMPLER_3D, 2, ShaderAccess::COMPUTE),
+				RegisterLayout(NAME("Worley output"), 19, TextureType::TEXTURE_3D, 5, ShaderAccess::COMPUTE, GPUFormat::R8, true),
+				RegisterLayout(NAME("Worley sampler"), 20, SamplerType::SAMPLER_3D, 3, ShaderAccess::COMPUTE)
 			)
 		};
 
@@ -485,6 +662,12 @@ struct RaytracingInterface : public ViewportInterface {
 		gpuData->sphereCount = sphereCount;
 		gpuData->cubeCount = cubeCount;
 		gpuData->planeCount = planeCount;
+
+		gpuData->lightCount = lightCount;
+		gpuData->directionalLightCount = directionalLightCount;
+		gpuData->pointLightCount = pointLightCount;
+		gpuData->spotLightCount = spotLightCount;
+
 		gpuData->skyboxColor = { 0, 0.5f, 1 };
 		gpuData->exposure = 1;
 		gpuData->ipd = 6.2f;
@@ -569,8 +752,12 @@ struct RaytracingInterface : public ViewportInterface {
 			)
 		};
 
+		Vec3f32 sunDir = Vec3f32{ -0.5f, -2, -1 }.normalize();
+
+		//Directional lights: 0->N
+
 		Light lights[lightCount] = {
-			{ { 0, 0, 0 }, 0, { 0, -1, 0 }, 0, { 0.4f, 0.2f, 0.4f }, 0 },
+			{ { 0, 0, 0 }, 0, sunDir, 0, { 0.7f, 0.7f, 0.7f }, 0 },
 			{ { 0, 0.1f, 0 }, 5, { 0, 0, 0 }, 1, { 1.5f, 1.5f, 1.5f }, 0 },
 			{ { 2, 2, 2 }, 7, { 0, 0, 0 }, 1, { 0.7f, 0.5f, 1.5f }, 0 }
 		};
@@ -587,8 +774,10 @@ struct RaytracingInterface : public ViewportInterface {
 
 		skybox = {
 			g, NAME("Skybox"),
-			igxi::Helper::loadDiskExternal("./textures/cape_hill_4k.hdr", g)
+			igxi::Helper::loadDiskExternal("./textures/abandoned_tank_farm_04_4k.hdr", g)
 		};
+
+		worleyInit();
 
 		//Create sampler
 
@@ -609,11 +798,17 @@ struct RaytracingInterface : public ViewportInterface {
 		descriptorsInfo.resources[7] = { cubeData, 0 };
 		descriptorsInfo.resources[13] = { initData, 0 };
 		descriptorsInfo.resources[14] = { samplerLinear, skybox, TextureType::TEXTURE_2D };
+		descriptorsInfo.resources[16] = { worleyData, 0 };
+		descriptorsInfo.resources[19] = { worleyOutput, TextureType::TEXTURE_3D };
+		descriptorsInfo.resources[20] = { wrapLinearSampler, worleyOutput, TextureType::TEXTURE_3D };
 
 		raytracingDescriptors = {
 			g, NAME("Raytracing descriptors"),
 			descriptorsInfo
 		};
+
+		//
+		worleyInitPoints();
 
 		//Prepare shaders
 
@@ -622,6 +817,77 @@ struct RaytracingInterface : public ViewportInterface {
 
 	~RaytracingInterface() {
 		oic::System::files()->removeFileChangeCallback("./shaders");
+	}
+
+	//Helpers for interacting with worley
+
+	void worleyInit() {
+
+		worleyOutput = {
+			g, NAME("Worley output"),
+			Texture::Info(
+				TextureType::TEXTURE_3D,
+				worleySize.cast<Vec3u16>(),
+				GPUFormat::R8, 
+				GPUMemoryUsage::GPU_WRITE_ONLY,
+				1, 1, 1, true
+			)
+		};
+
+		worleyData = {
+			g, NAME("Worley data"),
+			GPUBuffer::Info(
+				sizeof(WorleyData),
+				GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE
+			)
+		};
+
+		worleyDat = (WorleyData*) worleyData->getBuffer();
+		::new(worleyDat) WorleyData{};
+
+		prevWorleyDat = *worleyDat;
+
+		worleyDat->worleyRes = worleySize;
+
+		worleySeed();
+	}
+
+	void worleySeed() {
+		worleyDat->offsetX = r.range<f32>(-1000, 1000);
+		worleyDat->offsetY = r.range<f32>(-1000, 1000);
+		worleyDat->offsetZ = r.range<f32>(-1000, 1000);
+	}
+
+	bool worleyInitPoints() {
+
+		//TODO: This crashes >:(
+
+		if (worleyScaleOld == worleyScale)
+			return false;
+
+		worleyScaleOld = worleyScale;
+
+		Vec3u16 worleyCells = (worleySize.cast<Vec3f32>() * worleyScale).cast<Vec3u16>();
+
+		worleyPoints.release();
+		worleyPoints = {
+			g, NAME("Worley points"),
+			Texture::Info(
+				TextureType::TEXTURE_3D,
+				worleyCells,
+				GPUFormat::RGBA8, 
+				GPUMemoryUsage::GPU_WRITE_ONLY,
+				1, 1, 1, true
+			)
+		};
+
+		worleyDat->pointsRes = worleyCells.cast<Vec3u32>();
+
+		raytracingDescriptors->updateDescriptor(17, { worleyPoints, TextureType::TEXTURE_3D });
+		raytracingDescriptors->updateDescriptor(18, { wrapPointSampler, worleyPoints, TextureType::TEXTURE_3D });
+		raytracingDescriptors->flush({ { 17, 2 } });
+
+		return true;
 	}
 
 	//Create viewport resources
@@ -675,6 +941,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		rayConstData->flush(0, sizeof(*gpuData));
 		initData->flush(0, sizeof(*initDataBuf));
+		worleyData->flush(0, sizeof(*worleyDat));
 	}
 
 	//Update size of surfaces
@@ -729,7 +996,7 @@ struct RaytracingInterface : public ViewportInterface {
 			g, NAME("Cloutput"),
 			Texture::Info(
 				size.cast<Vec2u16>(), 
-				GPUFormat::R16f, GPUMemoryUsage::GPU_WRITE_ONLY, 
+				GPUFormat::RGBA16f, GPUMemoryUsage::GPU_WRITE_ONLY, 
 				1, 1
 			)
 		};
@@ -771,7 +1038,7 @@ struct RaytracingInterface : public ViewportInterface {
 		fillCommandList();
 	}
 
-	void fillCommandList() {
+	void initCommandList() {
 
 		cl->clear();
 
@@ -788,140 +1055,93 @@ struct RaytracingInterface : public ViewportInterface {
 			FlushBuffer(sphereData, uploadBuffer),
 			FlushBuffer(mesh, uploadBuffer),
 			FlushBuffer(initData, uploadBuffer),
+			FlushBuffer(worleyData, uploadBuffer),
+
 			FlushImage(skybox, uploadBuffer),
 
 			//Prepare all shaders
 
 			BindDescriptors(raytracingDescriptors),
-			BindPipeline(initPipeline),
-			Dispatch(1),
+
+			//Call init shader
+
+			BindPipeline(pipelines[INIT]),
+			Dispatch(1)
+
+		);
+	}
+
+	void fillCommandList() {
+
+		initCommandList();
+
+		if (didWorleyChange) {
+
+			cl->add(
+				BindPipeline(pipelines[WORLEY_DIST]),
+				Dispatch(worleyDat->pointsRes),
+
+				BindPipeline(pipelines[WORLEY]),
+				Dispatch(worleySize.cast<Vec3u32>())
+			);
+
+			prevWorleyDat = *worleyDat;
+		}
+
+		cl->add(
 
 			//Dispatch rays
 
-			BindPipeline(raygenPipeline),
+			BindPipeline(pipelines[RAYGEN]),
 			Dispatch(res.cast<Vec2u32>()),
 
 			//Shadows
 
-			BindPipeline(shadowPipeline),
+			BindPipeline(pipelines[SHADOW]),
 			Dispatch(Vec3u32(res.x, res.y, lightCount)),
 
 			//Clouds
 
-			BindPipeline(clouds),
+			BindPipeline(pipelines[CLOUDS]),
 			Dispatch(res.cast<Vec2u32>()),
 
 			//Reflections
 
-			BindPipeline(reflectionPipeline),
+			BindPipeline(pipelines[REFLECTION]),
 			Dispatch(res.cast<Vec2u32>()),
 
 			//Do gamma and color correction
 
-			BindPipeline(postProcessing),
+			BindPipeline(pipelines[POST_PROCESS]),
 			Dispatch(res.cast<Vec2u32>())
 		);
 	}
 
-	void makePipelines(u8 modified, bool fromExe) {
+	void makePipelines(u64 modified, bool fromExe) {
 
-		for (auto &pipeline : pipelines)
+		usz i = usz_MAX;
+
+		for (auto &pipeline : pipelinePaths) {
+
+			++i;
+
 			pipeline[0] = fromExe ? '~' : '.';
 
-		if (modified & 1) {
+			if (modified & (1_u64 << i)) {
 
-			Buffer raygenComp = oic::System::files()->readToBuffer(pipelines[0]);
+				Buffer comp = oic::System::files()->readToBuffer(pipeline);
 
-			raygenPipeline.release();
-			raygenPipeline = {
-				g, NAME("Raygen pipeline"),
-				Pipeline::Info(
-					Pipeline::Flag::NONE,
-					raygenComp,
-					pipelineLayout,
-					Vec3u32{ THREADS_X, THREADS_Y, 1 }
-				)
-			};
-		}
-
-		if (modified & 2) {
-
-			Buffer initShader = oic::System::files()->readToBuffer(pipelines[1]);
-
-			initPipeline.release();
-			initPipeline = {
-				g, NAME("Init shaders pipeline"),
-				Pipeline::Info(
-					Pipeline::Flag::NONE,
-					initShader,
-					pipelineLayout,
-					Vec3u32{ 1, 1, 1 }
-				)
-			};
-		}
-
-		if (modified & 4) {
-
-			Buffer shadow = oic::System::files()->readToBuffer(pipelines[2]);
-
-			shadowPipeline.release();
-			shadowPipeline = {
-				g, NAME("Shadow pipeline"),
-				Pipeline::Info(
-					Pipeline::Flag::NONE,
-					shadow,
-					pipelineLayout,
-					Vec3u32{ THREADS_X, THREADS_Y, 1 }
-				)
-			};
-		}
-
-		if (modified & 8) {
-
-			Buffer postProcess = oic::System::files()->readToBuffer(pipelines[3]);
-
-			postProcessing.release();
-			postProcessing = {
-				g, NAME("Post processing pipeline"),
-				Pipeline::Info(
-					Pipeline::Flag::NONE,
-					postProcess,
-					pipelineLayout,
-					Vec3u32{ THREADS_X, THREADS_Y, 1 }
-				)
-			};
-		}
-
-		if (modified & 16) {
-
-			Buffer reflectionShader = oic::System::files()->readToBuffer(pipelines[4]);
-
-			reflectionPipeline.release();
-			reflectionPipeline = {
-				g, NAME("Reflection pipeline"),
-				Pipeline::Info(
-					Pipeline::Flag::NONE,
-					reflectionShader,
-					pipelineLayout,
-					Vec3u32{ THREADS_X, THREADS_Y, 1 }
-				)
-			};
-		}
-
-		if (modified & 32) {
-
-			Buffer cloudShader = oic::System::files()->readToBuffer(pipelines[5]);
-
-			clouds.release();
-			clouds = {
-				g, NAME("Clouds pipeline"),
-				Pipeline::Info(
-					Pipeline::Flag::NONE,
-					cloudShader,
-					pipelineLayout,
-					Vec3u32{ THREADS_X, THREADS_Y, 1 }
-				)
-			};
+				pipelines[i].release();
+				pipelines[i] = {
+					g, NAME(pipeline),
+					Pipeline::Info(
+						Pipeline::Flag::NONE,
+						comp,
+						pipelineLayout,
+						Vec3u32{ THREADS_X, THREADS_Y, 1 }
+					)
+				};
+			}
 		}
 
 		if (!cl->empty())
@@ -1004,6 +1224,9 @@ struct RaytracingInterface : public ViewportInterface {
 	//Update eye
 	void update(const ViewportInfo* vi, f64 dt) final override {
 
+		worleyDat->cloudOffset.x += f32(dt * worleyDat->windDirection.x * worleyDat->windSpeed);
+		worleyDat->cloudOffset.z += f32(dt * worleyDat->windDirection.y * worleyDat->windSpeed);
+
 		Vec4f32 spheres[sphereCount] = {
 			Vec4f32(0, 1, 5, 1),
 			Vec4f32(0, 1, -5, 1),
@@ -1060,8 +1283,17 @@ struct RaytracingInterface : public ViewportInterface {
 			gpuData->eye -= (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
 		}
 
-		if (res.neq(0).all())
+		if (res.neq(0).all()) {
+
 			updateUniforms(stationary);
+
+			didWorleyChange = std::memcmp(&prevWorleyDat, worleyDat, sizeof(*worleyDat));
+
+			if (!cl->empty() && (worleyInitPoints() || didWorleyChange)) {
+				fillCommandList();
+				didWorleyChange = false;
+			}
+		}
 	}
 
 	//Input

@@ -23,7 +23,8 @@ const uint
 	DisplayType_Reflection_object = 16,
 	DisplayType_Reflection_intersection_attributes = 17,
 	DisplayType_Reflection_of_reflection = 18,
-	DisplayType_Clouds = 19;
+	DisplayType_Clouds = 19,
+	DisplayType_Worley = 20;
 
 const uint 
 	ProjectionType_Default = 0, 
@@ -63,6 +64,11 @@ layout(binding=0, std140) uniform GPUData {
 	uint planeCount;
 	uint displayType;
 	bool useSkybox;
+	uint lightCount;
+
+	uint directionalLightCount;
+	uint pointLightCount;
+	uint spotLightCount;
 
 };
 
