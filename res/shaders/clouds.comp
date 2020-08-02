@@ -34,6 +34,7 @@ layout(binding=1, std140) uniform WorleyData {
 	vec2 windDirection;
 	float cloudAbsorption;
 	uint lightSamples;
+	bool cloudsEnabled;
 
 	//TODO: cloud_noise.glsl
 
@@ -94,16 +95,39 @@ bool intersectCloud(Ray ray, inout float minT, inout float maxT, float hitT) {
 	return true;
 }
 
+float calcPh(vec3 p) {
+	return (p.y - min(cloudA, cloudB)) / abs(cloudB - cloudA);
+}
+
+//http://www.diva-portal.org/smash/get/diva2:1223894/FULLTEXT01.pdf
 float D(vec3 p) {
+
+	//Calculate variables altering cloud shape by height
+	//E.g. rounding bottom and top
+
+	float ph = calcPh(p);
+
+	float SRb = clamp(ph / 0.07, 0, 1);
+	float SRt = 1 - clamp((ph - 0.2) / 0.8, 0, 1);		//TODO: Weather map
+	float SA = SRb * SRt;
+
+	//Get cloud shape from grid sample
+
 	float s = texture(worleySampler, p * cloudScale * 0.001 + cloudOffset * 0.01).r;
-	return max(s - cloudThreshold, 0) * cloudMultiplier;
+
+	float cloudShape = max(s - cloudThreshold, 0) * cloudMultiplier;
+
+	return cloudShape * SA;
 }
 
 vec3 marchLight(vec3 p) {
 
 	vec3 light = vec3(0);
 
-	//There could be something blocking the suns :(
+	if(lightSamples == 0)
+		return vec3(1, 1, 1);
+
+	//There could be something blocking the sun(s) :(
 	//But do we want to shoot a ray for that?
 
 	for(uint i = 0; i < directionalLightCount; ++i) {
@@ -116,12 +140,12 @@ vec3 marchLight(vec3 p) {
 
 		intersectCloud(Ray(p, 0, dir, 0), minT, maxT, noHit);
 
-		float marchDist = maxT / lightSamples;
+		float marchDist = (minT + maxT) / lightSamples;
 
 		float d = 0;
 
 		for(uint j = 0; j < lightSamples; ++j)
-			d += D(p + dir * marchDist * j) * marchDist;
+			d += D(p + dir * (marchDist * j + minT)) * marchDist;
 
 		light += exp(-d * cloudAbsorption) * lights[i].col;
 	}

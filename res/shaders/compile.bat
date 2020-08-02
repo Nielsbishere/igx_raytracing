@@ -12,7 +12,7 @@ echo -- Compiling file "%str%" in dir "%dir%"
 
 rem do compile
 
-glslangValidator -G1.0 --target-env spirv1.0 -Os -e main -o "%str%.spv" "%str%"
+glslangValidator -G1.0 --target-env spirv1.0 -e main -o "%str%.spv" "%str%"
 if %errorlevel% neq 0 exit /b %errorlevel%
 echo -- Success compiling
 

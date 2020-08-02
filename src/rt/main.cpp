@@ -81,7 +81,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 	SamplerRef samplerNearest, samplerLinear, wrapPointSampler, wrapLinearSampler;
 
-	f64 speed = 5, fovChangeSpeed = 7;
+	f64 speed = 5;
 	f32 fov = 70;
 
 	static constexpr usz 
@@ -165,7 +165,7 @@ struct RaytracingInterface : public ViewportInterface {
 				"Eye",
 				"Skybox color",
 				"Exposure",
-				"Display time",
+				"Display type",
 				"Projection type",
 				"Interpupillary distance (mm)",
 				"Enable skybox"
@@ -288,7 +288,7 @@ struct RaytracingInterface : public ViewportInterface {
 		f32 offsetY{};
 
 		f32 offsetZ{};
-		bool isInverted = true;	u8 padding[3]{};
+		bool isInverted = true;	u8 padding0[3]{};
 		f32 visibleLayer{};
 		f32 cloudA = 20;
 		Vec3f32 cloudScale = Vec3f32(4.f, 3.2f, 4.f);
@@ -305,9 +305,11 @@ struct RaytracingInterface : public ViewportInterface {
 		Vec2f32 windDirection = Vec2f32(0.01f, 1);
 		float cloudAbsorption = 1;
 		u32 lightSamples = 4;
+		bool enabled = true; u8 padding1[3]{};
 
 		InflectWithName(
 			{ 
+				"Is enabled",
 				"Displayed layer",
 				"Is inverted",
 				"Seed",
@@ -336,6 +338,8 @@ struct RaytracingInterface : public ViewportInterface {
 				"Light samples"
 			},
 
+			enabled,
+
 			(Slider<f32, 0, 512>&) visibleLayer,
 			isInverted,
 
@@ -361,7 +365,7 @@ struct RaytracingInterface : public ViewportInterface {
 			(Slider<f32, -1, 1>&) windDirection.y,
 
 			(Slider<f32, 1e-4f, 1>&) cloudAbsorption,
-			(Slider<u32, 1, 16>&) lightSamples
+			(Slider<u32, 0, 32>&) lightSamples
 		);
 
 	};
@@ -385,6 +389,12 @@ struct RaytracingInterface : public ViewportInterface {
 
 	bool shouldOutputNextFrame{};
 	bool isResizeRequested{}, didWorleyChange = true;
+
+	f64 frameTime{}, fps{}, time{};
+	u32 frames{};
+
+	bool isShift{}, isCtrl{};
+	Vec3f32 inputDir{};
 
 	static constexpr Vec3u32 worleySize = 128;
 
@@ -423,8 +433,9 @@ struct RaytracingInterface : public ViewportInterface {
 
 	InflectWithName(
 		{
+			"FPS",
 			"",
-			"FOV", "FOV Change speed",
+			"FOV",
 			"Eye dir", "Move speed",
 			"View matrix",
 			"Target size", "Target samples",
@@ -434,8 +445,9 @@ struct RaytracingInterface : public ViewportInterface {
 			"Noise",
 			"Reseed noise"
 		},
+		(const f32&) fps,
 		*gpuData,
-		fov, fovChangeSpeed,
+		fov,
 		eyeDir, speed,
 		(const Mat4x4f32 &)v,
 		targetSize, targetSamples,
@@ -774,7 +786,7 @@ struct RaytracingInterface : public ViewportInterface {
 
 		skybox = {
 			g, NAME("Skybox"),
-			igxi::Helper::loadDiskExternal("./textures/abandoned_tank_farm_04_4k.hdr", g)
+			igxi::Helper::loadDiskExternal("./textures/qwantani_4k.hdr", g)
 		};
 
 		worleyInit();
@@ -1215,17 +1227,20 @@ struct RaytracingInterface : public ViewportInterface {
 		g.present(raytracingOutput, 0, 0, swapchain, gui.getCommands(), cl);
 	}
 
-	f64 time = 0;
-
-	bool isShift{}, isCtrl{};
-	Vec3f32 inputDir{};
-	f32 fovChangeDir{};
-
 	//Update eye
-	void update(const ViewportInfo* vi, f64 dt) final override {
+	void update(const ViewportInfo*, f64 dt) final override {
 
 		worleyDat->cloudOffset.x += f32(dt * worleyDat->windDirection.x * worleyDat->windSpeed);
 		worleyDat->cloudOffset.z += f32(dt * worleyDat->windDirection.y * worleyDat->windSpeed);
+
+		if (frameTime >= 1) {
+			fps = frames / frameTime;
+			frameTime = 0;
+			frames = 0;
+		}
+
+		++frames;
+		frameTime += dt;
 
 		Vec4f32 spheres[sphereCount] = {
 			Vec4f32(0, 1, 5, 1),
@@ -1251,23 +1266,12 @@ struct RaytracingInterface : public ViewportInterface {
 
 		#endif
 
-		for (auto* dvc : vi->devices)
-			if (dvc->isType(InputDevice::MOUSE)) {
+		//TODO: Mouse wheel seems to hang?
 
-				f64 delta = dvc->getCurrentAxis(MouseAxis::Axis_wheel_y);
-
-				//TODO: Mouse wheel seems to hang?
-
-				if (oic::Math::abs(delta) > 0.02)
-					speed = oic::Math::clamp(speed * 1 + (delta / 1024), 0.5, 5.0);
-			}
-
-		if(isCtrl)
+		if (isCtrl)
 			time += dt * 0.75;
 		else
 			time += dt * 0.05;
-
-		fov = f32(oic::Math::clamp(fov - fovChangeSpeed * fovChangeDir * dt, 0.99999999, 149.99999999));
 
 		bool stationary = true;
 
@@ -1313,9 +1317,6 @@ struct RaytracingInterface : public ViewportInterface {
 
 		if (ih == Key::Key_d) inputDir.x = -f32(isActive);
 		if (ih == Key::Key_a) inputDir.x = isActive;
-
-		if (ih == Key::Key_1) fovChangeDir = -f32(isActive);
-		if (ih == Key::Key_2) fovChangeDir = isActive;
 
 		if (ih == Key::Key_shift)
 			isShift = isActive;
