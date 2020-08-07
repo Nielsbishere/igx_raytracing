@@ -1,4 +1,13 @@
 #ifndef RAND_UTIL
+#define RAND_UTIL
+
+//Defining a seed on the GPU sent from the CPU
+
+struct Seed {
+	float randomX, randomY;
+	float cpuOffsetX, cpuOffsetY;
+	uint sampleCount;
+};
 
 //Generic random funcs
 

@@ -1,75 +1,127 @@
-
-const float noHit = 3.4028235e38;
-const float epsilon = 1e-4;		//epsilon for offsets
-
-const uint shadowHit = 0xFFFFFFFF;		//loc1D is set to this when a shadow hit
-const uint noRayHit = 0xFFFFFFFF;		//loc1D is set to this when a primary didn't hit
+#ifndef PRIMITIVE
+#define PRIMITIVE
 
 //Define very often used types
 
-struct Ray { 
-
-	vec3 pos;
-	float pad0; 
-
-	vec3 dir;
-	float pad1;
-};
-
-struct RayPayload {
-
-	vec3 dir;				//Vector direction
-	uint loc1D;				//1D location in buffer
-
-	vec3 color;				//Color this ray contributes
-	float maxDist;			//Maximum hit distance along the ray's axis
-};
-
-struct ShadowPayload {
-
-	vec3 pos;
-	uint loc1D;
-
-	vec3 dir;
-	float maxDist;
-};
-
-struct Triangle {
-
-	vec3 p0;
-	uint object;
-
-	vec3 p1;
-	uint material;
-
-	vec3 p2;
-	uint padding;
-};
-
-struct Cube {
-
-	vec3 start;
-	uint object;
-
-	vec3 end;
-	uint material;
-};
+const float noHit = 3.4028235e38;
+const uint noRayHit = 0xFFFFFFFF;
 
 struct Hit {
 	
-	vec2 intersection;
-	float hitT;
-	uint material;
+	uvec2 normal;
+	uvec2 rayDir;
 
-	vec3 normal;
+	vec3 rayOrigin;
+	float hitT;
+
+	vec2 uv;
 	uint object;
+	uint primitive;
 
 };
 
+struct Ray { 
+	vec3 pos;
+	vec3 dir;
+};
+
+struct Triangle {
+	vec3 p0;
+	vec3 p1;
+	vec3 p2;
+};
+
+struct Cube {
+	vec3 start;
+	vec3 end;
+};
+
+struct Light {
+
+	vec3 pos;
+	uint radOrigin;
+
+	uvec2 dir;
+	uvec2 colorType;	//colorType.y >> 16 = colorType, unpackColor(colorType).rgb = color
+
+};
+
+const uint MaterialInfo_CastReflections = 1;
+const uint MaterialInfo_CastRefractions = 2;
+const uint MaterialInfo_NoCastShadows = 4;
+const uint MaterialInfo_UseSpecular = 8;
+const uint MaterialInfo_TexAlbedo = 16;
+const uint MaterialInfo_TexNormal = 32;
+const uint MaterialInfo_TexRoughness = 64;
+const uint MaterialInfo_TexMetallic = 128;
+const uint MaterialInfo_TexSpecular = 256;
+const uint MaterialInfo_TexOpacity = 512;
+const uint MaterialInfo_TexEmission = 1024;
+
+struct Material {
+
+	uvec2 albedoMetallic;
+	uvec2 ambientRoughness;
+
+	uvec2 emissive;
+	float transparency;
+	uint materialInfo;
+
+};
+
+//Store 22-22-20 instead of 24
+//Meaning we can almost represent a full float for x and y channels
+//This is about 6.6 digits precision and 6 for the z channel
+
+uvec2 encodeNormal(vec3 n) {
+
+	n = n * 0.5 + 0.5;
+
+	uvec3 multi = uvec3(n * (vec3(1 << 22, 1 << 22, 1 << 20) - 1));
+	
+	return uvec2(
+		(multi.x << 10) | (multi.y >> 12),
+		(multi.y << 20) | multi.z
+	);
+}
+
+vec3 decodeNormal(uvec2 stored) {
+
+	uvec3 unpacked = uvec3(
+		stored.x >> 10,
+		(stored.x << 22) | (stored.y >> 20),
+		stored.y & ((1 << 20) - 1)
+	);
+
+	const vec3 div = 1 / (vec3(1 << 21, 1 << 21, 1 << 19) - 1);
+	return vec3(unpacked) * div - 1;
+}
+
+//Allows packing 16-bit info into a
+
+uvec2 packColor(vec3 col, uint a) {
+	return uvec2(packHalf2x16(col.rg), packHalf2x16(vec2(col.b, 0)) | (a << 16));
+}
+
+uvec2 packColor(vec4 col) {
+	return uvec2(packHalf2x16(col.rg), packHalf2x16(col.ba));
+}
+
+vec3 unpackColor3(uvec2 col) {
+	return vec3(unpackHalf2x16(col.r), unpackHalf2x16(col.g).r);
+}
+
+vec4 unpackColor4(uvec2 col) {
+	return vec4(unpackHalf2x16(col.r), unpackHalf2x16(col.g));
+}
+
+uint unpackColorA(uvec2 col) {
+	return col.g >> 16;
+}
 
 //Ray intersections
 
-bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint obj, uint prevObj) {
+bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint64_t obj, uint64_t prevObj) {
 
 	const vec3 dif = sphere.xyz - r.pos;
 	const float t = dot(dif, r.dir);
@@ -85,17 +137,21 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint obj,
 		hit.hitT = hitT;
 
 		const vec3 o = hitT * r.dir + r.pos;
+		const vec3 normal = normalize(sphere.xyz - o);
 
-		hit.normal = normalize(sphere.xyz - o);
+		hit.normal = encodeNormal(normal);
 
-		float latitude = asin(hit.normal.z);
-		float longitude = atan(hit.normal.y / hit.normal.x);
-
+		//Convert lat/long to uv
 		//Limits of asin and atan are pi/2, so we divide by that to get normalized coordinates
 		//We then * 0.5 + 0.5 to get a uv in that representation
-		//if lat == NaN && lon == NaN: x = 1 or x = -1
 
-		hit.intersection = vec2(latitude, longitude) * (0.636619746685 * 0.5) + 0.5;
+		float latitude = asin(normal.z);
+		float longitude = atan(normal.y / normal.x);
+
+		if(isnan(longitude)) 
+			longitude = 0;
+
+		hit.uv = vec2(latitude, longitude) * (0.636619746685 * 0.5) + 0.5;
 
 		return true;
 	}
@@ -103,7 +159,7 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint obj,
 	return false;
 }
 
-bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint obj, uint prevObj) {
+bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint64_t obj, uint64_t prevObj) {
 
 	vec3 dir = normalize(plane.xyz);
 	float dif = dot(r.dir, -dir);
@@ -115,14 +171,14 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint obj, u
 	if(hitT >= 0 && obj != prevObj && hitT < hit.hitT) {
 
 		hit.hitT = hitT;
-		hit.normal = dif > 0 ? -dir : dir;
+		hit.normal = encodeNormal(dif > 0 ? -dir : dir);
 
 		vec3 o = hitT * r.dir + r.pos;
 
 		vec3 planeX = cross(plane.xyz, vec3(0, 0, 1));
 		vec3 planeZ = cross(plane.xyz, vec3(1, 0, 0));
 
-		hit.intersection = vec2(dot(o, planeX), dot(o, planeZ));
+		hit.uv = vec2(dot(o, planeX), dot(o, planeZ));
 
 		return true;
 	}
@@ -130,9 +186,7 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint obj, u
 	return false;
 }
 
-bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint obj, uint prevObj) {
-
-	//TODO: Triangles act weird >:(
+bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint64_t obj, uint64_t prevObj) {
 
 	const vec3 p1_p0 = tri.p1 - tri.p0;
 	const vec3 p2_p0 = tri.p2 - tri.p0;
@@ -157,14 +211,14 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint obj, u
 	
 	if (t <= 0 || obj == prevObj || t >= hit.hitT) return false;
 
-	hit.intersection = vec2(u, v);
+	hit.uv = vec2(u, v);
 	hit.hitT = t;
-	hit.normal = normalize(cross(tri.p1 - tri.p0, tri.p2 - tri.p0)) * -sign(a);
+	hit.normal = encodeNormal(normalize(cross(tri.p1 - tri.p0, tri.p2 - tri.p0)) * -sign(a));
 
 	return true;
 }
 
-bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint obj, uint prevObj) {
+bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint64_t obj, uint64_t prevObj) {
 
 	vec3 revDir = 1 / r.dir;
 
@@ -188,20 +242,20 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint obj, uin
 
 	if(tmin == mi.x) {
 		int isLeft = int(mi.x == startDir.x);
-		hit.normal = vec3(isLeft * 2 - 1, 0, 0);
-		hit.intersection = pos.yz;
+		hit.normal = encodeNormal(vec3(isLeft * 2 - 1, 0, 0));
+		hit.uv = pos.yz;
 	}
 
 	else if(tmin == mi.y) {
 		int isDown = int(mi.y == startDir.y);
-		hit.normal = vec3(0, isDown * 2 - 1, 0);
-		hit.intersection = pos.xz;
+		hit.normal = encodeNormal(vec3(0, isDown * 2 - 1, 0));
+		hit.uv = pos.xz;
 	}
 
 	else {
 		int isBack = int(mi.z == startDir.z);
-		hit.normal = vec3(0, 0, isBack * 2 - 1);
-		hit.intersection = pos.xy;
+		hit.normal = encodeNormal(vec3(0, 0, isBack * 2 - 1));
+		hit.uv = pos.xy;
 	}
 
 	//
@@ -213,3 +267,5 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint obj, uin
 bool sphereInPlane(const vec4 sphere, const vec4 plane) {
 	return dot(plane.xyz, sphere.xyz) + plane.w <= sphere.w;
 }
+
+#endif

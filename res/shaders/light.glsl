@@ -1,27 +1,13 @@
 #include "utils.glsl"
-#include "material.glsl"
 #include "trace.glsl"
 
 const float minRoughness = 0.01;
 const float specularEpsilon = 0.001;
 
 const uint LightType_Directional = 0;
-const uint LightType_Point = 1;
-//const uint LightType_Spot = 2;		TODO:
+//const uint LightType_Spot = 1;		TODO:
+const uint LightType_Point = 2;
 //const uint LightType_Area = 3;		TODO:
-
-struct Light {
-
-	vec3 pos;
-	float rad;
-
-	vec3 dir;
-	uint type;
-
-	vec3 col;
-	float angle;
-
-};
 
 vec3 lambert(const vec3 diffuse, const Light light, const vec3 n, const vec3 l, const float dist) {
 	const float NdotL = max(dot(n, l), 0);
@@ -106,10 +92,6 @@ vec3 cookTorrance(
 }
 
 //Per light shading
-
-layout(binding=7, std140) readonly buffer Lights {
-	Light lights[];
-};
 
 vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, inout float maxDist) {
 

@@ -1,10 +1,15 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_gpu_shader_int64 : require
 #include "defines.glsl"
 #include "trace.glsl"
 
-layout(binding=13, std140) writeonly buffer HitBuffer {
+layout(binding=6, std140) writeonly buffer HitBuffer {
 	Hit hitBuffer[];
+};
+
+layout(binding=7, std430) readonly buffer SeedBuffer {
+	Seed seed;
 };
 
 layout(local_size_x = THREADS_X, local_size_y = THREADS_Y, local_size_z = 1) in;
@@ -15,14 +20,15 @@ void main() {
 	
 	const uvec2 loc = gl_GlobalInvocationID.xy;
 
-	if(loc.x >= width || loc.y >= height)
+	if(loc.x >= camera.width || loc.y >= camera.height)
 		return;
 
-	const uint loc1D = loc.x + loc.y * width;
-	const Ray ray = calculatePrimary(loc);
+	const uint loc1D = loc.x + loc.y * camera.width;
+	const Ray ray = calculatePrimary(loc, vec2(seed.randomX, seed.randomY));
 	
 	//TODO: Perhaps do an intersect per tile (4 planes)
-	//		then intersect that geometry; not all spheres
+	//		then intersect that geometry and lights
+	//		and reduce spp for primaries (reprojection)
 
 	hitBuffer[loc1D] = traceGeometry(ray, noRayHit);
 }

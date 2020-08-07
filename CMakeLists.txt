@@ -67,6 +67,15 @@ add_virtual_files(
 		${shaderBinaries}
 )
 
+add_virtual_files(
+	DIRECTORY
+		${CMAKE_CURRENT_SOURCE_DIR}/res/textures
+	NAME
+		textures
+	FILES
+		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/qwantani_4k.hdr
+)
+
 configure_icon(rtigx "${CMAKE_CURRENT_SOURCE_DIR}/igx/res/icon.ico")
 configure_virtual_files(rtigx)
 
