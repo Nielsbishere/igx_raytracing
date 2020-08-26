@@ -1,13 +1,14 @@
 #pragma once
 #include "types/scene_object_types.hpp"
 #include "types/mat.hpp"
+#include "gui/ui_value.hpp"
 
 namespace igx::rt {
 
 	struct Hit {
 
-		Vec2u32 normal;
-		Vec2u32 rayDir;
+		Vec3f32 rayDir;
+		u32 normal;
 
 		Vec3f32 rayOrigin;
 		f32 hitT;
@@ -28,10 +29,26 @@ namespace igx::rt {
 
 	struct CPUCamera : public Camera {
 
-		Vec3f32 eyeDir = { 0, 0, -1 };
+		ui::Slider<f32, 0, 360_deg> pitch, yaw, roll;
 
-		f32 speed = 5;
-		f32 fov = 70;
+		ui::Slider<f32, 0.01f, 10.f> speed = 5;
+		ui::Slider<f32, 1, 179> leftFov = 70, rightFov = 70;
+
+		Mat3x3f32 getRot() const;
+
+		//Create a view matrix from the rotation and eye
+		//If eyeOffset == 0, the camera will be put like a cyclops (in the center), used for relative movement
+		//If eyeOffset == -1, camera will be on the left side
+		//If eyeOffset == 1, camera will be on the right side
+		//Could theoretically be expanded for 8-eyed creatures
+		Mat4x4f32 getView(f32 eyeOffset) const;
+
+		InflectParentedWithName(
+			Camera, 
+			{ "Speed", "Left FOV", "Right FOV", "Pitch (X)", "Yaw (Y)", "Roll (Z)" }, 
+			speed, leftFov, rightFov,
+			pitch, yaw, roll
+		);
 
 	};
 

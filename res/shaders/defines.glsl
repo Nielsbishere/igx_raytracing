@@ -3,6 +3,7 @@
 #define ALLOW_PLANES
 #define ALLOW_TRIANGLES
 #define ALLOW_CUBES
+
 #define GRAPHICS_DEBUG
 
 //#define DISABLE_SHADOWS
@@ -13,8 +14,12 @@
 //TODO: Compile for different thread counts
 
 #define THREADS 64
-#define THREADS_X 16
-#define THREADS_Y 16
+
+//THREADS_XY should be 1 << THREADS_XY_SHIFT, but due to GLSL limitations it is hardcoded
+
+#define THREADS_XY 16
+#define THREADS_XY_SHIFT 4
+#define THREADS_XY_MASK (THREADS_XY - 1)
 
 #ifdef FULL_PRECISION
 	#define outputFormat rgba32f

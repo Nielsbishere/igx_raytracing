@@ -1,4 +1,12 @@
 @echo off
+
+set deb=n
+
+if "%~1"=="-d" (
+	set deb=y
+	shift
+)
+
 :loop
 
 rem Go to folder
@@ -18,8 +26,13 @@ echo -- Success compiling
 
 rem do optimize
 
-echo "%1.spv"
-spirv-remap -v --do-everything --input "%str%.spv" --output "%CD%"
+if "%deb%"=="n" (
+	spirv-remap -v --do-everything --input "%str%.spv" --output "%CD%"
+)
+else (
+	spirv-remap -v --opt all --map all --dce all --input "%str%.spv" --output "%CD%"
+)
+
 if %errorlevel% neq 0 exit /b %errorlevel%
 echo -- Success remapping
 

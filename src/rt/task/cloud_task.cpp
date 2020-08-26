@@ -68,7 +68,7 @@ namespace igx::rt {
 				"`/shaders/clouds.comp.spv",
 				{},
 				shaderLayout,
-				Vec3u32(THREADS_X, THREADS_Y, 1)
+				Vec3u32(THREADS_XY, THREADS_XY, 1)
 			)
 		);
 

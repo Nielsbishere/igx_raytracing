@@ -4,7 +4,7 @@
 
 namespace igx::rt {
 
-	class PrimaryTask : public GPUBufferRenderTask {
+	class RaygenTask : public GPUBufferRenderTask {
 
 		FactoryContainer &factory;
 
@@ -18,7 +18,7 @@ namespace igx::rt {
 
 	public:
 
-		PrimaryTask(
+		RaygenTask(
 			FactoryContainer &factory,
 			const GPUBufferRef &seedBuffer,
 			const DescriptorsRef &cameraDescriptor

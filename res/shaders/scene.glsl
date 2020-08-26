@@ -5,12 +5,12 @@
 
 struct SceneInfo {
 
-	uint triangleCount;
 	uint lightCount;
 	uint materialCount;
-	uint cubeCount;
-
+	uint triangleCount;
 	uint sphereCount;
+
+	uint cubeCount;
 	uint planeCount;
 	uint directionalLightCount;
 	uint spotLightCount;
@@ -43,8 +43,12 @@ layout(binding=4, std430) readonly buffer Lights {
 	Light lights[];
 };
 
-layout(binding=5, std140) readonly buffer Materials {
+layout(binding=5, std430) readonly buffer Materials {
 	Material materials[];
+};
+
+layout(binding=6, std430) readonly buffer MaterialIndices {
+	uint materialIndices[];
 };
 
 layout(binding=0) uniform sampler2D skybox;

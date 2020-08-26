@@ -9,10 +9,14 @@
 Hit traceGeometry(const Ray ray, uint prevHit) {
 
 	Hit hit;
+
+	hit.rayOrigin = ray.pos;
+	hit.rayDir = ray.dir;
+	hit.normal = 0;
+
 	hit.hitT = noHit;
 	hit.uv = vec2(0);
 	hit.object = hit.primitive = 0;
-	hit.normal = uvec2(0);
 
 	//TODO: Only get normal and uv of one object
 
@@ -41,9 +45,6 @@ Hit traceGeometry(const Ray ray, uint prevHit) {
 			if(rayIntersectPlane(ray, planes[i], hit, j, prevHit))
 				hit.object = j;
 	#endif
-
-	hit.rayOrigin = ray.pos;
-	hit.rayDir = encodeNormal(ray.dir);
 
 	return hit;
 }

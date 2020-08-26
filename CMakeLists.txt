@@ -3,14 +3,9 @@ project(igxrt)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-if(MSVC)
-	add_compile_options("/std:c++latest")
-else()
-	add_compile_options("-std=c++latest")
-endif()
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -55,7 +50,16 @@ source_group("Shader includes" FILES ${shaderIncludes})
 source_group("Shader binaries" FILES ${shaderBinaries})
 
 if(doShaderRecreate)
-	add_custom_command(TARGET rtigx PRE_BUILD COMMAND compile ${shaders} WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res/shaders")
+
+		add_custom_command(
+			TARGET rtigx 
+			PRE_BUILD COMMAND
+			ARGS
+			"${CMAKE_CURRENT_SOURCE_DIR}/res/shaders/compile"
+			"$<$<CONFIG:debug>:-d>"
+			${shaders}
+		)
+
 endif()
 
 add_virtual_files(

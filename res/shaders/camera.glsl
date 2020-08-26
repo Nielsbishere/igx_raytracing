@@ -5,11 +5,10 @@
 const uint 
 	ProjectionType_Default = 0, 
 	ProjectionType_Omnidirectional = 1,
-	ProjectionType_Equirect = 2,
-	ProjectionType_Stereoscopic_omnidirectional_TB = 3,
-	ProjectionType_Stereoscopic_TB = 4,
-	ProjectionType_Stereoscopic_omnidirectional_LR = 5,
-	ProjectionType_Stereoscopic_LR = 6;
+	ProjectionType_Stereoscopic_omnidirectional_TB = 2,
+	ProjectionType_Stereoscopic_TB = 3,
+	ProjectionType_Stereoscopic_omnidirectional_LR = 4,
+	ProjectionType_Stereoscopic_LR = 5;
 
 struct Camera {
 
@@ -27,10 +26,18 @@ struct Camera {
 
 	vec3 skyboxColor;
 	float exposure;
+	
+	vec3 p3;
+	float focalDistance;
+
+	vec3 p4;
+	float aperature;
+
+	vec3 p5;
+	uint pad0;
 
 	vec2 invRes;
-	float focalDistance;
-	float aperature;
+	uvec2 tiles;
 };
 
 layout(binding=0, std140) uniform CameraData {
@@ -53,24 +60,11 @@ Ray calculateOmni(const vec2 centerPixel, bool isLeft) {
 
 	const vec3 pos = 
 		camera.eye + vec3(coss.x, 0, sins.x) * 
-		(camera.ipd * 5e-4) * (isLeft ? - 1 : 1);	
+		(camera.ipd * 5e-4) * (isLeft ? -1 : 1);	
 
 	const vec3 dir = vec3(sins.x * coss.y, sins.y, -coss.x * coss.y);
 
 	return Ray(pos, dir);
-}
-
-Ray calculateEquirect(const vec2 centerPixel) {
-
-	//TODO: Should be facing the camera's eyeDir
-
-	const vec2 spherical = centerPixel * vec2(2 * pi, pi);
-
-	const vec2 sins = sin(spherical), coss = cos(spherical);
-
-	const vec3 dir = vec3(coss.y * sins.x, sins.y * sins.x, coss.x);
-
-	return Ray(camera.eye, dir);
 }
 
 Ray calculateScreen(const vec2 centerPixel) {
@@ -84,12 +78,39 @@ Ray calculateScreen(const vec2 centerPixel) {
 	return Ray(pos, dir);
 }
 
+Ray calculateScreenRight(const vec2 centerPixel) {
+
+	const vec3 right = camera.p4 - camera.p3;
+	const vec3 up = camera.p5 - camera.p3;
+
+	const vec3 pos = camera.p3 + centerPixel.x * right + centerPixel.y * up;
+	const vec3 dir = normalize(pos - camera.eye);
+
+	return Ray(pos, dir);
+}
+
 Ray calculateOmniStereoTB(const vec2 centerPixel) {
 	return calculateOmni(vec2(centerPixel.x, fract(centerPixel.y * 2)), centerPixel.y < 0.5);
 }
 
 Ray calculateOmniStereoLR(const vec2 centerPixel) {
 	return calculateOmni(vec2(fract(centerPixel.x * 2), centerPixel.y), centerPixel.x < 0.5);
+}
+
+Ray calculateStereoTB(vec2 centerPixel) {
+
+	if(centerPixel.y < 0.5)
+		return calculateScreen(vec2(centerPixel.x, centerPixel.y * 2));
+
+	return calculateScreenRight(vec2(centerPixel.x, centerPixel.y * 2 - 1));
+}
+
+Ray calculateStereoLR(vec2 centerPixel) {
+
+	if(centerPixel.x < 0.5)
+		return calculateScreen(vec2(centerPixel.x * 2, centerPixel.y));
+
+	return calculateScreenRight(vec2(centerPixel.x * 2 - 1, centerPixel.y));
 }
 
 Ray calculatePrimary(const uvec2 loc, const vec2 randLoc) {
@@ -102,19 +123,38 @@ Ray calculatePrimary(const uvec2 loc, const vec2 randLoc) {
 		case ProjectionType_Omnidirectional: 
 			return calculateOmni(centerPixel, false);
 
-		case ProjectionType_Equirect:
-			return calculateEquirect(centerPixel);
-
 		case ProjectionType_Stereoscopic_omnidirectional_TB: 
 			return calculateOmniStereoTB(centerPixel);
 
 		case ProjectionType_Stereoscopic_omnidirectional_LR: 
 			return calculateOmniStereoLR(centerPixel);
 
+		case ProjectionType_Stereoscopic_TB: 
+			return calculateStereoTB(centerPixel);
+
+		case ProjectionType_Stereoscopic_LR: 
+			return calculateStereoLR(centerPixel);
+
 		default:
 			return calculateScreen(centerPixel);
 	}
 }
 
+uint calculateTiled(uvec2 loc) {
+
+	//Calculate current index in tilemap
+
+	uvec2 tile = loc >> THREADS_XY_SHIFT;
+	uint tile1D = (tile.x + tile.y * camera.tiles.x) << (2 * THREADS_XY_SHIFT);
+
+	//Calculate current index in tile
+
+	uvec2 inTile = loc & THREADS_XY_MASK;
+	uint inTile1D = inTile.x | (inTile.y << THREADS_XY_SHIFT);
+
+	//Calculate global offset
+
+	return tile1D | inTile1D;
+}
 
 #endif

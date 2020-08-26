@@ -1,4 +1,4 @@
-#include "rt/task/primary_task.hpp"
+#include "rt/task/raygen_task.hpp"
 #include "rt/enums.hpp"
 #include "rt/structs.hpp"
 #include "helpers/scene_graph.hpp"
@@ -6,7 +6,7 @@
 
 namespace igx::rt {
 
-	PrimaryTask::PrimaryTask(
+	RaygenTask::RaygenTask(
 		FactoryContainer &factory, 
 		const GPUBufferRef &seedBuffer,
 		const DescriptorsRef &cameraDescriptor
@@ -14,7 +14,7 @@ namespace igx::rt {
 		GPUBufferRenderTask(
 			factory.getGraphics(), GPUBuffer::Info(
 				sizeof(Hit), GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY
-			), NAME("Primary task")
+			), NAME("Raygen task")
 		),
 
 		factory(factory),
@@ -26,57 +26,57 @@ namespace igx::rt {
 		auto raytracingLayout = SceneGraph::getLayout();
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("HitBuffer"), 9, GPUBufferType::STRUCTURED, 6, 2,
+			NAME("HitBuffer"), 10, GPUBufferType::STRUCTURED, 7, 2,
 			ShaderAccess::COMPUTE, sizeof(Hit), true
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("SeedBuffer"), 10, GPUBufferType::STORAGE, 7, 2,
+			NAME("SeedBuffer"), 11, GPUBufferType::STORAGE, 8, 2,
 			ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
 		shaderLayout = factory.get(
-			NAME("Primary shader layout"),
+			NAME("Raygen shader layout"),
 			PipelineLayout::Info(raytracingLayout)
 		);
 
 		descriptors = {
-			g, NAME("Primary task descriptors"),
+			g, NAME("Raygen task descriptors"),
 			Descriptors::Info(
 				shaderLayout, 2, {
-					{ 10, GPUSubresource(seedBuffer) }
+					{ 11, GPUSubresource(seedBuffer) }
 				}
 			)
 		};
 
 		shader = factory.get(
-			NAME("Primary shader"),
+			NAME("Raygen shader"),
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
 				"`/shaders/raygen.comp.spv",
 				{},
 				shaderLayout,
-				Vec3u32(THREADS_X, THREADS_Y, 1)
+				Vec3u32(THREADS_XY, THREADS_XY, 1)
 			)
 		);
 	}
 
-	void PrimaryTask::resize(const Vec2u32 &size) {
-		GPUBufferRenderTask::resize(size);
-		descriptors->updateDescriptor(9, GPUSubresource(getBuffer()));
-		descriptors->flush({ { 9, 1 } });
+	void RaygenTask::resize(const Vec2u32 &size) {
+		GPUBufferRenderTask::resize(size.align<THREADS_XY>());
+		descriptors->updateDescriptor(10, GPUSubresource(getBuffer()));
+		descriptors->flush({ { 10, 1 } });
 	}
 
-	void PrimaryTask::switchToScene(SceneGraph *_sceneGraph) { 
+	void RaygenTask::switchToScene(SceneGraph *_sceneGraph) { 
 		if (sceneGraph != _sceneGraph) {
 			markNeedCmdUpdate();
 			sceneGraph = _sceneGraph;
 		}
 	}
 
-	void PrimaryTask::update(f64) {  }
+	void RaygenTask::update(f64) {  }
 
-	void PrimaryTask::prepareCommandList(CommandList *cl) {
+	void RaygenTask::prepareCommandList(CommandList *cl) {
 		cl->add(
 			BindDescriptors({ cameraDescriptor, sceneGraph->getDescriptors(), descriptors }),
 			BindPipeline(shader),

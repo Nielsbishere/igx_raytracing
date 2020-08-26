@@ -1,9 +1,10 @@
 #pragma once
-#include "task/main_task.hpp"
+#include "task/composite_task.hpp"
 #include "helpers/factory.hpp"
 #include "system/viewport_interface.hpp"
 #include "gui/gui.hpp"
 #include "gui/struct_inspector.hpp"
+#include "gui/ui_value.hpp"
 #include "types/mat.hpp"
 #include "utils/random.hpp"
 #include "utils/inflect.hpp"
@@ -12,21 +13,29 @@
 #include "../res/shaders/defines.glsl"
 
 namespace igx::rt {
-	
-	struct RaytracingInterface : public oic::ViewportInterface {
-	
-		Graphics& g;
 
-		FactoryContainer factory;
-		CompositeTask compositeTask;
-	
-		igx::ui::GUI gui;
-	
-		SwapchainRef swapchain;
-		CommandListRef cl;
-		NielsScene sceneGraph;
+	oicExposedEnum(
+		Resolution, u8,
+		CUSTOM,
+		SD,
+		HD,
+		FHD,
+		QHD,
+		UHD_4K,
+		UHD_8K
+	);
 
-		oic::Random r;
+	static constexpr Vec2u16 pixelsByResolution[] = {
+		{},
+		{ 720, 480 },
+		{ 1280, 720 },
+		{ 1920, 1080 },
+		{ 2560, 1440 },
+		{ 3840, 2160 },
+		{ 7680, 4320 }
+	};
+	
+	struct RaytracingProperties {
 
 		//Outputting to image
 
@@ -34,14 +43,80 @@ namespace igx::rt {
 
 		Vec2u16 targetSize = { 7680, 4320 };
 
-		u16 targetSamples = 64;
+		f64 fps{};
 
-		bool shouldOutputNextFrame{}, isResizeRequested{};
+		ui::Slider<u16, 1, 2048> targetSamples = 64;
 
-		//Track fps
+		Resolution res = Resolution::UHD_8K;
+
+		bool shouldOutputNextFrame{}, isPortrait{};
+
+		inline void exportToPNG() const {		//TODO: Non const!
+			(bool&) shouldOutputNextFrame = true;
+		}
+
+		InflectBody(
+
+			static const List<String> memberNames = {
+				"FPS", "Output path",
+				"Samples per pixel", "Output resolution preset", "Output size",
+				"Use portrait mode",
+				"Export to PNG"
+			};
+
+			if(res == Resolution::CUSTOM)
+				inflector.inflect(
+					this, recursion, memberNames, 
+					(const f64&) fps, targetOutput, targetSamples, res, targetSize, isPortrait,
+					Button<RaytracingProperties, &RaytracingProperties::exportToPNG>{}
+				);
+
+			else inflector.inflect(
+				this, recursion, memberNames, 
+				(const f64&) fps, targetOutput, targetSamples, res, (const Vec2u16&) targetSize, isPortrait,
+				Button<RaytracingProperties, &RaytracingProperties::exportToPNG>{}
+			);
+
+			if constexpr (!std::is_const_v<decltype(*this)>)
+				if (res != Resolution::CUSTOM)
+					targetSize = pixelsByResolution[res.value];
+
+		);
+
+		inline Vec2u16 getRes() const {
+			return isPortrait ? targetSize.swap() : targetSize;
+		}
+
+	};
+
+	class RaytracingInterface : public oic::ViewportInterface {
 	
-		f64 frameTime{}, fps{};
+		Graphics& g;
+
+		ui::GUI gui;
+
+		GPUBufferRef cameraBuffer;
+
+		FactoryContainer factory;
+		CompositeTask compositeTask;
+	
+		SwapchainRef swapchain;
+		CommandListRef cl;
+		NielsScene sceneGraph;
+
+		oic::Random r;
+
+		ui::StructInspector<RaytracingProperties> properties;
+		ui::StructInspector<CPUCamera> cameraInspector;
+
+		Vec3f32 dir;
+
+		f64 frameTime{};
 		u32 frames{};
+
+		bool isResizeRequested{};
+
+	public:
 	
 		//Functions
 	

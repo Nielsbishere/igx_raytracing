@@ -1,3 +1,5 @@
+#ifndef LIGHT
+#define LIGHT
 #include "utils.glsl"
 #include "trace.glsl"
 
@@ -11,7 +13,7 @@ const uint LightType_Point = 2;
 
 vec3 lambert(const vec3 diffuse, const Light light, const vec3 n, const vec3 l, const float dist) {
 	const float NdotL = max(dot(n, l), 0);
-	return diffuse * light.col * dist * NdotL;
+	return diffuse * unpackColor3(light.colorType) * dist * NdotL;
 }
 
 //Lighting with the metallic workflow
@@ -88,23 +90,25 @@ vec3 cookTorrance(
 
 	const vec3 color = kD * albedo + kS;
 
-	return color * light.col * invSquareDist * NdotL;
+	return color * unpackColor3(light.colorType) * invSquareDist * NdotL;
 }
 
 //Per light shading
 
 vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, inout float maxDist) {
 
-	vec3 l = light.dir;
+	vec3 l;
 	brightness = 1;
 	maxDist = noHit;
 
-	if(light.type == LightType_Point) {
+	//Point
+
+	if(unpackColorA(light.colorType) == LightType_Point) {
 
 		l = pos - light.pos;
 		const float dst = length(l);
 
-		const float normDist = dst / light.rad;
+		const float normDist = dst / unpackHalf2x16(light.radOrigin).x;
 
 		brightness = max(1 - normDist * normDist, 0);
 
@@ -113,12 +117,18 @@ vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, in
 		maxDist = dst;				//TODO: This is along the direction of the light, it should be along the distance of the ray
 	}
 
+	//Directional
+
+	else l = decodeNormal(light.dir);
+
 	return normalize(l);
 }
 
 vec3 shadeLight(
 	const vec3 F0,
-	const Material m,
+	const vec3 albedo,
+	const float roughness,
+	const float metallic,
 	const Light light, 
 	const vec3 pos,
 	const vec3 n,
@@ -131,12 +141,12 @@ vec3 shadeLight(
 
 	//Calculate color
 
-	float k = m.roughness + 1;
+	float k = roughness + 1;
 	k *= k / 8;
 	
 	const float NdotL = max(dot(n, l), 0);
 
-	return cookTorrance(F0, m.albedo, light, n, l, v, NdotV, brightness, m.roughness, m.metallic, k, NdotL);
+	return cookTorrance(F0, albedo, light, n, l, v, NdotV, brightness, roughness, metallic, k, NdotL);
 }
 
 //Per pixel shading
@@ -149,22 +159,27 @@ vec3 shade(
 	const float NdotV,
 	const vec3 reflected
 ) {
-	const vec3 F0 = mix(vec3(0.04), m.albedo, m.metallic);
 
-	const vec3 kS = fresnelSchlickRoughness(F0, NdotV, m.metallic, m.albedo, m.roughness);
-	const vec3 kD = (1 - kS) * (1 - m.metallic);
+	const float roughness = unpackColorAUnorm(m.ambientRoughness);
+	const vec3 ambient = unpackColor3(m.ambientRoughness);
+
+	const float metallic = unpackColorAUnorm(m.albedoMetallic);
+	const vec3 albedo = unpackColor3(m.albedoMetallic);
+
+	const vec3 F0 = mix(vec3(0.04), albedo, metallic);
+
+	const vec3 kS = fresnelSchlickRoughness(F0, NdotV, metallic, albedo, roughness);
+	const vec3 kD = (1 - kS) * (1 - metallic);
 
 	vec3 lighting = vec3(0, 0, 0);
 
 	for(uint i = 0; i < lights.length(); ++i)
-		lighting += shadeLight(F0, m, lights[i], pos, n, v, NdotV);
+		lighting += shadeLight(F0, albedo, roughness, metallic, lights[i], pos, n, v, NdotV);
 
-	return (m.ambient + kD / pi) * m.albedo + kS * reflected + lighting + m.emissive;
+	const vec3 emissive = unpackColor3(m.emissive);
+
+	return (ambient + kD / pi) * albedo + kS * reflected + lighting + emissive;
 }
-
-layout(binding=3, std140) readonly buffer Materials {
-	Material materials[];
-};
 
 vec3 shadeHit(Ray ray, Hit hit, vec3 reflection) {
 
@@ -173,10 +188,13 @@ vec3 shadeHit(Ray ray, Hit hit, vec3 reflection) {
 
 	const vec3 position = ray.pos + ray.dir * hit.hitT;
 	
+	const vec3 n = decodeNormalLQ(hit.normal);
 	const vec3 v = ray.dir;
-	const float NdotV = max(dot(v, -hit.normal), 0);
+	const float NdotV = max(dot(v, -n), 0);
 
-	return shade(materials[hit.material], position, hit.normal, v, NdotV, reflection);
+	const Material m = materials[materialIndices[hit.object]];
+
+	return shade(m, position, n, v, NdotV, reflection);
 }
 
 vec3 shadeHitFinalRecursion(Ray ray, Hit hit) {
@@ -186,12 +204,13 @@ vec3 shadeHitFinalRecursion(Ray ray, Hit hit) {
 
 	const vec3 position = ray.pos + ray.dir * hit.hitT;
 	
+	const vec3 n = decodeNormalLQ(hit.normal);
 	const vec3 v = ray.dir;
-	const float NdotV = max(dot(v, -hit.normal), 0);
+	const float NdotV = max(dot(v, -n), 0);
 
-	const vec3 reflected = sampleSkybox(reflect(v, hit.normal));
+	const vec3 reflected = sampleSkybox(reflect(v, n));
 
-	return shade(materials[hit.material], position, hit.normal, v, NdotV, reflected);
+	return shade(materials[materialIndices[hit.object]], position, n, v, NdotV, reflected);
 }
 
 uint indexToLight(uvec2 loc, uvec2 res, uint lightId, uvec2 shift, uvec2 mask) {
@@ -203,3 +222,5 @@ uint indexToLight(uvec2 loc, uvec2 res, uint lightId, uvec2 shift, uvec2 mask) {
 
 	return tile.x + tile.y * tiles.x + lightId * tiles.y * tiles.x;
 }
+
+#endif

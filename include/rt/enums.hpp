@@ -1,10 +1,13 @@
 #pragma once
+#include "types/types.hpp"
 
 namespace igx::rt {
 
-	enum class Editors {
-		CAMERA,
-		CLOUDS
+	enum Editors : u32 {
+		EDITOR_MAIN,
+		EDITOR_CAMERA,
+		EDITOR_CLOUDS,
+		EDITOR_DEBUG
 	};
 
 	oicExposedEnum(

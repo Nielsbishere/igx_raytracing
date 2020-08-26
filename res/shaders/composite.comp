@@ -1,0 +1,198 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_gpu_shader_int64 : require
+#include "defines.glsl"
+#include "light.glsl"
+
+layout(binding=0, rgba8) writeonly uniform image2D rayOutput;
+layout(binding=1) uniform sampler2DMS ui;
+
+layout(binding=7, std430) readonly buffer HitBuffer {
+	Hit hitBuffer[];
+};
+
+#ifdef GRAPHICS_DEBUG
+
+const uint DEBUG_TYPE_DEFAULT		= 0;
+const uint DEBUG_TYPE_RAY_DIR		= 1;
+const uint DEBUG_TYPE_NORMALS		= 2;
+const uint DEBUG_TYPE_UV			= 3;
+const uint DEBUG_TYPE_OBJECT		= 4;
+const uint DEBUG_TYPE_PRIMITIVE		= 5;
+const uint DEBUG_TYPE_MATERIAL		= 6;
+const uint DEBUG_TYPE_ALBEDO		= 7;
+const uint DEBUG_TYPE_METALLIC		= 8;
+const uint DEBUG_TYPE_AMBIENT		= 9;
+const uint DEBUG_TYPE_ROUGHNESS		= 10;
+const uint DEBUG_TYPE_EMISSIVE		= 11;
+const uint DEBUG_TYPE_TRANSPARENCY	= 12;
+const uint DEBUG_TYPE_SKY			= 13;
+
+layout(binding=2, std140) uniform DebugData {
+	uint debugType;
+	uint nanOnly;
+};
+
+#endif
+
+layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
+
+void main() {
+
+	//Get ray position
+
+	const ivec2 loc = ivec2(gl_GlobalInvocationID.xy);
+
+	if(loc.x >= camera.width || loc.y >= camera.height) 
+		return;
+
+	const uvec2 uloc = uvec2(gl_GlobalInvocationID.xy);
+	const vec2 asUv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
+	
+	//Calculate hit
+	
+	const uint loc1D = calculateTiled(loc);
+	const Hit hit = hitBuffer[loc1D];
+
+	const Ray prim = Ray(hit.rayOrigin, hit.rayDir);
+	const vec3 hitPos = hit.hitT * prim.dir + prim.pos;
+
+	#ifndef GRAPHICS_DEBUG
+		
+		vec3 color = shadeHitFinalRecursion(prim, hit);
+
+	#else
+
+		vec3 color = vec3(0);
+
+		switch(debugType) {
+
+			case DEBUG_TYPE_DEFAULT:
+				color = shadeHitFinalRecursion(prim, hit);
+				break;
+
+			case DEBUG_TYPE_RAY_DIR:
+				color = prim.dir * 0.5 + 0.5;
+				break;
+
+			case DEBUG_TYPE_NORMALS:
+				color = decodeNormalLQ(hit.normal) * 0.5 + 0.5;
+				break;
+
+			case DEBUG_TYPE_UV:
+				color = vec3(fract(hit.uv), 0);
+				break;
+
+			case DEBUG_TYPE_OBJECT: {
+
+				uint geometryCount = sceneInfo.triangleCount + sceneInfo.sphereCount + sceneInfo.cubeCount + sceneInfo.planeCount;
+				
+				if(hit.hitT < noHit)
+					color = (float(hit.object + 1) / geometryCount).rrr;
+
+				break;
+			}
+
+			case DEBUG_TYPE_PRIMITIVE:
+
+				if(hit.hitT < noHit)
+					color = vec3(1);
+
+				break;
+
+			case DEBUG_TYPE_MATERIAL:
+
+				if(hit.hitT < noHit)
+					color = ((materialIndices[hit.object] + 1) / sceneInfo.materialCount).rrr;
+
+				break;
+
+			case DEBUG_TYPE_ALBEDO:
+			
+				if(hit.hitT < noHit)
+					color = unpackColor3(materials[materialIndices[hit.object]].albedoMetallic);
+
+				break;
+				
+			case DEBUG_TYPE_METALLIC:
+			
+				if(hit.hitT < noHit)
+					color = unpackColorAUnorm(materials[materialIndices[hit.object]].albedoMetallic).rrr;
+
+				break;
+
+			case DEBUG_TYPE_AMBIENT:
+			
+				if(hit.hitT < noHit)
+					color = unpackColor3(materials[materialIndices[hit.object]].ambientRoughness);
+
+				break;
+				
+			case DEBUG_TYPE_ROUGHNESS:
+			
+				if(hit.hitT < noHit)
+					color = unpackColorAUnorm(materials[materialIndices[hit.object]].ambientRoughness).rrr;
+
+				break;
+
+			case DEBUG_TYPE_EMISSIVE:
+			
+				if(hit.hitT < noHit)
+					color = unpackColor3(materials[materialIndices[hit.object]].emissive);
+
+				break;
+
+			case DEBUG_TYPE_TRANSPARENCY:
+			
+				if(hit.hitT < noHit)
+					color = materials[materialIndices[hit.object]].transparency.rrr;
+
+				break;
+
+			case DEBUG_TYPE_SKY:
+				color = sampleSkybox(prim.dir);
+				break;
+
+		}
+
+		//Mark NaN as a bright blue
+
+		if(any(isnan(color)))
+			color = vec3(0, 0, 10000);
+
+		//Or display only blue for NaN points (black for regular)
+
+		else if(nanOnly != 0)
+			color = vec3(0);
+
+	#endif
+	
+	//Exposure mapping
+
+	color = max(vec3(1, 1, 1) - exp(-color * camera.exposure), vec3(0));
+
+	//Blend with UI
+
+	int sampleCount = textureSamples(ui);
+
+	ivec2 sampleLoc = ivec2(loc.x, camera.height - loc.y);
+
+	const float disableUI = 0;
+
+	if(disableUI == 0) {
+
+		vec4 uiColor = toRGB(texelFetch(ui, sampleLoc, 0));
+
+		for(int i = 1; i < sampleCount; ++i)
+			uiColor += toRGB(texelFetch(ui, sampleLoc, i));
+
+		uiColor /= sampleCount;
+
+		color = mix(color, uiColor.rgb, float(uiColor.a != 0));
+
+	}
+
+	//Store
+	
+	imageStore(rayOutput, loc, vec4(color, 1));
+}

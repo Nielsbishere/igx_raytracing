@@ -1,4 +1,4 @@
-#include "rt/task/main_task.hpp"
+#include "rt/task/composite_task.hpp"
 #include "rt/main.hpp"
 #include "graphics/command/commands.hpp"
 #include "graphics/enums.hpp"
@@ -8,6 +8,7 @@
 #include "input/keyboard.hpp"
 #include "input/mouse.hpp"
 #include "igxi/convert.hpp"
+#include "rt/enums.hpp"
 
 using namespace igx::ui;
 using namespace oic;
@@ -15,7 +16,14 @@ using namespace oic;
 namespace igx::rt {
 
 	RaytracingInterface::RaytracingInterface(Graphics& g) : 
-		g(g), gui(g), factory(g), compositeTask(factory, gui),
+		g(g), gui(g), factory(g), 
+		cameraBuffer{
+			g, NAME("Camera buffer"),
+			GPUBuffer::Info(
+				sizeof(Camera), GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE
+			)
+		}, 
+		compositeTask(cameraBuffer, factory, gui),
 		sceneGraph(factory)
 	{
 		compositeTask.switchToScene(&sceneGraph);
@@ -27,9 +35,27 @@ namespace igx::rt {
 		//Reserve command list
 
 		cl = { g, NAME("Command list"), CommandList::Info(64_KiB) };
+
+		gui.addWindow(
+			Window(
+				"Main window", EDITOR_MAIN, {}, Vec2f32(360, 200),
+				&properties, Window::DEFAULT_SCROLL_NO_CLOSE
+			)
+		);
+
+		gui.addWindow(
+			ui::Window(
+				"Camera editor", EDITOR_CAMERA, 
+				Vec2f32(0, 200), Vec2f32(360, 300),
+				&cameraInspector, ui::Window::DEFAULT_SCROLL_NO_CLOSE
+			)
+		);
 	}
 
-	RaytracingInterface::~RaytracingInterface() { }
+	RaytracingInterface::~RaytracingInterface() { 
+		gui.removeWindow(EDITOR_MAIN);
+		gui.removeWindow(EDITOR_CAMERA);
+	}
 
 	//Create viewport resources
 
@@ -57,7 +83,17 @@ namespace igx::rt {
 	//Update size of surfaces
 
 	void RaytracingInterface::resize(const ViewportInfo*, const Vec2u32& size) {
+
 		g.wait();
+
+		CPUCamera &camera = cameraInspector;
+
+		camera.width = size.x; 
+		camera.height = size.y;
+		camera.invRes = Vec2f32(1.f / size.x, 1.f / size.y);
+
+		camera.tiles = size / THREADS_XY;
+
 		gui.resize(size);
 		compositeTask.resize(size);
 	}
@@ -81,23 +117,23 @@ namespace igx::rt {
 		igxi.format.push_back(image->getInfo().format);
 		igxi.data.push_back({ result->readback(allocation, image->size()) });
 
-		igxi::Helper::toDiskExternal(igxi, targetOutput);
+		igxi::Helper::toDiskExternal(igxi, properties.value.targetOutput);
 	}
 
 	void RaytracingInterface::render(const ViewportInfo *vi) {
 
-		if (compositeTask.needsCommandUpdate()) {
-			cl->clear();
-			sceneGraph.fillCommandList(cl);
-			compositeTask.prepareCommandList(cl);
-		}
-
-		if (shouldOutputNextFrame) {
+		if (properties.value.shouldOutputNextFrame) {
 
 			//Setup render
 
 			isResizeRequested = true;
-			resize(vi, targetSize.cast<Vec2u32>());
+			resize(vi, properties.value.getRes().cast<Vec2u32>());
+
+			update(vi, 0);
+
+			cl->clear();
+			sceneGraph.fillCommandList(cl);
+			compositeTask.prepareCommandList(cl);
 
 			compositeTask.prepareMode(RenderMode::UQ);
 
@@ -120,10 +156,17 @@ namespace igx::rt {
 			compositeTask.prepareMode(RenderMode::MQ);
 
 			isResizeRequested = false;
-			shouldOutputNextFrame = false;
+			properties.value.shouldOutputNextFrame = false;
 		}
 
 		//Regular render
+
+		if (compositeTask.needsCommandUpdate()) {
+			cl->clear();
+			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
+			sceneGraph.fillCommandList(cl);
+			compositeTask.prepareCommandList(cl);
+		}
 
 		gui.render(g, vi->offset, vi->monitors);
 		g.present(compositeTask.getTexture(), 0, 0, swapchain, gui.getCommands(), cl);
@@ -133,7 +176,7 @@ namespace igx::rt {
 	void RaytracingInterface::update(const ViewportInfo *vi, f64 dt) {
 
 		if (frameTime >= 1) {
-			fps = frames / frameTime;
+			properties.value.fps = frames / frameTime;
 			frameTime = 0;
 			frames = 0;
 		}
@@ -141,10 +184,64 @@ namespace igx::rt {
 		++frames;
 		frameTime += dt;
 
+		f32 speedUp = 1;
+
 		for(InputDevice *dev : vi->devices)
-			if(dynamic_cast<Keyboard*>(dev))
-				if(dev->isDown(Key::Key_ctrl))
+			if (dynamic_cast<Keyboard*>(dev)) {
+
+				if (dev->isDown(Key::Key_ctrl))
 					dt *= 1.5;
+
+				if (dev->isDown(Key::Key_shift))
+					speedUp *= 2;
+			}
+
+		CPUCamera &camera = cameraInspector;
+
+		auto v = camera.getView(0);
+
+		Vec3f32 d = dir.clamp(-1, 1) * f32(dt * camera.speed * speedUp);
+		camera.eye += (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
+
+		bool isStereo =
+			camera.projectionType == ProjectionType::Stereoscopic_TB ||
+			camera.projectionType == ProjectionType::Stereoscopic_LR;
+
+		auto vLeft = camera.getView(isStereo ? -1.f : 0);
+
+		if (camera.projectionType != ProjectionType::Omnidirectional) {
+
+			Vec2f32 res(f32(camera.width), f32(camera.height));
+
+			if (isStereo) {
+
+				if (camera.projectionType == ProjectionType::Stereoscopic_LR)
+					res.x /= 2;
+
+				else res.y /= 2;
+			}
+
+			const f32 aspect = res.aspect();
+			const f32 nearPlaneLeft = f32(std::tan(camera.leftFov * 0.5_deg));
+
+			camera.p0 = (vLeft * Vec4f32(-aspect, 1, -nearPlaneLeft, 1)).cast<Vec3f32>();
+			camera.p1 = (vLeft * Vec4f32(aspect, 1, -nearPlaneLeft, 1)).cast<Vec3f32>();
+			camera.p2 = (vLeft * Vec4f32(-aspect, -1, -nearPlaneLeft, 1)).cast<Vec3f32>();
+
+			if (isStereo) {
+
+				auto vRight = camera.getView(1);
+				const f32 nearPlaneRight = f32(std::tan(camera.rightFov * 0.5_deg));
+
+				camera.p3 = (vRight * Vec4f32(-aspect, 1, -nearPlaneRight, 1)).cast<Vec3f32>();
+				camera.p4 = (vRight * Vec4f32(aspect, 1, -nearPlaneRight, 1)).cast<Vec3f32>();
+				camera.p5 = (vRight * Vec4f32(-aspect, -1, -nearPlaneRight, 1)).cast<Vec3f32>();
+
+			}
+		}
+
+		std::memcpy(cameraBuffer->getBuffer(), &camera, sizeof(Camera));
+		cameraBuffer->flush(0, sizeof(Camera));
 
 		sceneGraph.update(dt);
 		compositeTask.update(dt);
@@ -154,9 +251,38 @@ namespace igx::rt {
 
 	void RaytracingInterface::onInputUpdate(ViewportInfo*, const InputDevice *dvc, InputHandle ih, bool isActive) {
 
-		//TODO: If input event "isActive" was triggered in compositeTask, then that one should keep track of it, vice versa for gui
+		bool hasUpdated = gui.onInputUpdate(dvc, ih, isActive);
 
-		gui.onInputUpdate(dvc, ih, isActive);
+		if (dynamic_cast<const Keyboard*>(dvc)) {
+
+			f32 v = isActive ? 1.f : -1.f;
+
+			static constexpr Key keys[] = {
+				Key::Key_a, Key::Key_d,			//x
+				Key::Key_q, Key::Key_e,			//y
+				Key::Key_w, Key::Key_s			//z
+			};
+
+			constexpr usz j = _countof(keys);
+			usz i = 0;
+
+			for (; i < j; ++i)
+				if (keys[i].value == ih)
+					break;
+
+			if (i == j)
+				return;
+
+			usz i2 = i >> 1;
+
+			if (!isActive && !dir.arr[i2])
+				return;
+
+			if (isActive && hasUpdated)
+				return;
+
+			dir.arr[i2] += i & 1 ? v : -v;
+		}
 	}
 };
 
