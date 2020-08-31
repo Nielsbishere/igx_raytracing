@@ -7,14 +7,15 @@
 namespace igx::rt {
 
 	RaygenTask::RaygenTask(
-		FactoryContainer &factory, 
+		FactoryContainer &factory,
 		const GPUBufferRef &seedBuffer,
 		const DescriptorsRef &cameraDescriptor
 	) :
-		GPUBufferRenderTask(
-			factory.getGraphics(), GPUBuffer::Info(
-				sizeof(Hit), GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY
-			), NAME("Raygen task")
+		TextureRenderTask(
+			factory.getGraphics(), 
+			{ NAME("dirT"), NAME("uvObjectNormal") },
+			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba32f, GPUMemoryUsage::GPU_WRITE_ONLY), 
+			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba32f, GPUMemoryUsage::GPU_WRITE_ONLY)
 		),
 
 		factory(factory),
@@ -26,12 +27,17 @@ namespace igx::rt {
 		auto raytracingLayout = SceneGraph::getLayout();
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("HitBuffer"), 10, GPUBufferType::STRUCTURED, 7, 2,
-			ShaderAccess::COMPUTE, sizeof(Hit), true
+			NAME("DirT buffer"), 10, TextureType::TEXTURE_2D, 0, 2,
+			ShaderAccess::COMPUTE, GPUFormat::rgba32f, true
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("SeedBuffer"), 11, GPUBufferType::STORAGE, 8, 2,
+			NAME("UvObjectNormal buffer"), 11, TextureType::TEXTURE_2D, 1, 2,
+			ShaderAccess::COMPUTE, GPUFormat::rgba32f, true
+		));
+
+		raytracingLayout.push_back(RegisterLayout(
+			NAME("SeedBuffer"), 12, GPUBufferType::STORAGE, 8, 2,
 			ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
@@ -44,7 +50,7 @@ namespace igx::rt {
 			g, NAME("Raygen task descriptors"),
 			Descriptors::Info(
 				shaderLayout, 2, {
-					{ 11, GPUSubresource(seedBuffer) }
+					{ 12, GPUSubresource(seedBuffer) }
 				}
 			)
 		};
@@ -62,9 +68,12 @@ namespace igx::rt {
 	}
 
 	void RaygenTask::resize(const Vec2u32 &size) {
-		GPUBufferRenderTask::resize(size.align<THREADS_XY>());
-		descriptors->updateDescriptor(10, GPUSubresource(getBuffer()));
-		descriptors->flush({ { 10, 1 } });
+
+		TextureRenderTask::resize(size);
+
+		descriptors->updateDescriptor(10, GPUSubresource(getTexture(0), TextureType::TEXTURE_2D));
+		descriptors->updateDescriptor(11, GPUSubresource(getTexture(1), TextureType::TEXTURE_2D));
+		descriptors->flush({ { 10, 2 } });
 	}
 
 	void RaygenTask::switchToScene(SceneGraph *_sceneGraph) { 

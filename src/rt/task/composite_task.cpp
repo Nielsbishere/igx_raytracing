@@ -1,5 +1,6 @@
 #include "rt/task/composite_task.hpp"
 #include "rt/task/raygen_task.hpp"
+#include "rt/task/light_culling_task.hpp"
 #include "rt/enums.hpp"
 #include "rt/structs.hpp"
 #include "helpers/scene_graph.hpp"
@@ -59,8 +60,13 @@ namespace igx::rt {
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("HitBuffer"), 12, GPUBufferType::STRUCTURED, 7, 2,
-			ShaderAccess::COMPUTE, sizeof(Hit)
+			NAME("dirT"), 12, SamplerType::SAMPLER_2D, 2, 2,
+			ShaderAccess::COMPUTE
+		));
+
+		raytracingLayout.push_back(RegisterLayout(
+			NAME("uvObjectNormal"), 13, SamplerType::SAMPLER_2D, 3, 2,
+			ShaderAccess::COMPUTE
 		));
 
 		#ifdef GRAPHICS_DEBUG
@@ -77,7 +83,7 @@ namespace igx::rt {
 			::new(debData) DebugData();
 
 			raytracingLayout.push_back(RegisterLayout(
-				NAME("DebugInfo"), 13, GPUBufferType::UNIFORM, 2, 2,
+				NAME("DebugInfo"), 14, GPUBufferType::UNIFORM, 2, 2,
 				ShaderAccess::COMPUTE, sizeof(DebugData)
 			));
 
@@ -102,7 +108,7 @@ namespace igx::rt {
 			Descriptors::Info(shaderLayout, 2, {
 
 				#ifdef GRAPHICS_DEBUG
-					{ 13, GPUSubresource(debugBuffer) }
+					{ 14, GPUSubresource(debugBuffer) }
 				#endif
 
 			})
@@ -128,8 +134,11 @@ namespace igx::rt {
 
 		//Subtasks
 
+		auto raygen = new RaygenTask(factory, seedBuffer, cameraDescriptor);
+
 		tasks.add(
-			new RaygenTask(factory, seedBuffer, cameraDescriptor)
+			raygen /*,
+			new LightCullingTask(raygen, factory, cameraDescriptor)*/
 		);
 	}
 
@@ -141,10 +150,13 @@ namespace igx::rt {
 
 		ParentTextureRenderTask::resize(size);
 
+		auto raygen = tasks.get<RaygenTask>(0);
+
 		descriptors->updateDescriptor(10, GPUSubresource(getTexture(), TextureType::TEXTURE_2D));
 		descriptors->updateDescriptor(11, GPUSubresource(nearestSampler, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS));
-		descriptors->updateDescriptor(12, GPUSubresource(tasks.get<RaygenTask>(0)->getBuffer()));
-		descriptors->flush({ { 10, 3 } });
+		descriptors->updateDescriptor(12, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
+		descriptors->updateDescriptor(13, GPUSubresource(nearestSampler, raygen->getTexture(1), TextureType::TEXTURE_2D));
+		descriptors->flush({ { 10, 4 } });
 	}
 
 	void CompositeTask::switchToScene(SceneGraph *_sceneGraph) {

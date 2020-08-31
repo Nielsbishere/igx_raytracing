@@ -32,3 +32,4 @@
 *.app
 builds/
 res/output/
+res/old_shaders/

@@ -5,20 +5,6 @@
 
 namespace igx::rt {
 
-	struct Hit {
-
-		Vec3f32 rayDir;
-		u32 normal;
-
-		Vec3f32 rayOrigin;
-		f32 hitT;
-
-		Vec2f32 uv;
-		u32 object;
-		u32 primitive;
-
-	};
-
 	struct Seed {
 
 		f32 randomX, randomY;

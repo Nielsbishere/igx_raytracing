@@ -5,6 +5,8 @@
 
 namespace igx::rt {
 
+	//TODO: Fix cloud task (Hit buffer is not appropriate anymore)
+
 	CloudTask::CloudTask(
 		GPUBufferRenderTask *primaries,
 		FactoryContainer &factory, ui::GUI &gui
@@ -44,7 +46,7 @@ namespace igx::rt {
 				RegisterLayout(
 					NAME("Hit buffer"), 3,
 					GPUBufferType::STRUCTURED, 0, 0, 
-					ShaderAccess::COMPUTE, sizeof(Hit), false
+					ShaderAccess::COMPUTE, 0, false
 				),
 
 				RegisterLayout(

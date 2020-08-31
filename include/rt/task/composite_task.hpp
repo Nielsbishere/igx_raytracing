@@ -15,10 +15,9 @@ namespace igx::rt {
 		u32,
 		Default,
 		Ray_direction,
-		Normal,
+		Normals,
 		Uv,
 		Object,
-		Primitive,
 		Material,
 		Albedo,
 		Metallic,
@@ -26,12 +25,16 @@ namespace igx::rt {
 		Roughness,
 		Emissive,
 		Transparency,
-		Sky
+		Sky,
+		Lighting,
+		Reflection,
+		Shadow,
+		Lights_per_pixel
 	);
 
 	struct DebugData {
 
-		DebugType Display_type = DebugType::Normal;
+		DebugType Display_type = DebugType::Default;
 		bool Display_NaN_only{}; u8 pad0[3]{};
 
 		Inflect(Display_type, Display_NaN_only);

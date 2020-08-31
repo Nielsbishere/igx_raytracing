@@ -82,7 +82,7 @@ namespace igx::rt {
 
 	//Update size of surfaces
 
-	void RaytracingInterface::resize(const ViewportInfo*, const Vec2u32& size) {
+	void RaytracingInterface::resize(const ViewportInfo *vp, const Vec2u32& size) {
 
 		g.wait();
 
@@ -93,6 +93,9 @@ namespace igx::rt {
 		camera.invRes = Vec2f32(1.f / size.x, 1.f / size.y);
 
 		camera.tiles = size / THREADS_XY;
+
+		if(vp)
+			swapchain->onResize(size);
 
 		gui.resize(size);
 		compositeTask.resize(size);
@@ -127,11 +130,15 @@ namespace igx::rt {
 			//Setup render
 
 			isResizeRequested = true;
-			resize(vi, properties.value.getRes().cast<Vec2u32>());
+			resize(nullptr, properties.value.getRes().cast<Vec2u32>());
+
+			bool ui = cameraInspector.value.useUI;
+			cameraInspector.value.useUI = false;
 
 			update(vi, 0);
 
 			cl->clear();
+			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
 			sceneGraph.fillCommandList(cl);
 			compositeTask.prepareCommandList(cl);
 
@@ -151,12 +158,13 @@ namespace igx::rt {
 			//Reset to old state and wait for work to finish
 
 			Vec2u16 actualSize = swapchain->getInfo().size;
-			resize(vi, Vec2u32(actualSize.x, actualSize.y));
+			resize(nullptr, Vec2u32(actualSize.x, actualSize.y));
 
 			compositeTask.prepareMode(RenderMode::MQ);
 
 			isResizeRequested = false;
 			properties.value.shouldOutputNextFrame = false;
+			cameraInspector.value.useUI = ui;
 		}
 
 		//Regular render
@@ -166,6 +174,11 @@ namespace igx::rt {
 			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
 			sceneGraph.fillCommandList(cl);
 			compositeTask.prepareCommandList(cl);
+		}
+
+		if (!cameraInspector.value.useUI) {
+			g.present(compositeTask.getTexture(), 0, 0, swapchain, cl);
+			return;
 		}
 
 		gui.render(g, vi->offset, vi->monitors);
@@ -209,7 +222,11 @@ namespace igx::rt {
 
 		auto vLeft = camera.getView(isStereo ? -1.f : 0);
 
-		if (camera.projectionType != ProjectionType::Omnidirectional) {
+		if (
+			camera.projectionType != ProjectionType::Omnidirectional && 
+			camera.projectionType != ProjectionType::Stereoscopic_omnidirectional_LR && 
+			camera.projectionType != ProjectionType::Stereoscopic_omnidirectional_TB
+		) {
 
 			Vec2f32 res(f32(camera.width), f32(camera.height));
 
@@ -250,6 +267,9 @@ namespace igx::rt {
 	//Input
 
 	void RaytracingInterface::onInputUpdate(ViewportInfo*, const InputDevice *dvc, InputHandle ih, bool isActive) {
+
+		if (ih == Key::Key_f1 && !isActive)
+			cameraInspector.value.useUI = !cameraInspector.value.useUI;
 
 		bool hasUpdated = gui.onInputUpdate(dvc, ih, isActive);
 

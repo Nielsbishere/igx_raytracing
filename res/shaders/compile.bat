@@ -28,8 +28,7 @@ rem do optimize
 
 if "%deb%"=="n" (
 	spirv-remap -v --do-everything --input "%str%.spv" --output "%CD%"
-)
-else (
+) else (
 	spirv-remap -v --opt all --map all --dce all --input "%str%.spv" --output "%CD%"
 )
 

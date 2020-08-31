@@ -4,23 +4,27 @@
 
 namespace igx::rt {
 
-	class RaygenTask : public TextureRenderTask {
+	class RaygenTask;
+
+	class LightCullingTask : public TextureRenderTask {
 
 		FactoryContainer &factory;
 
 		SceneGraph *sceneGraph;
 
-		PipelineRef shader;
-		PipelineLayoutRef shaderLayout;
+		SamplerRef nearestSampler;
+		PipelineRef pipeline;
+		PipelineLayoutRef layout;
 
 		DescriptorsRef descriptors, cameraDescriptor;
-		GPUBufferRef seedBuffer;
+
+		RaygenTask *raygenTask;
 
 	public:
 
-		RaygenTask(
+		LightCullingTask(
+			RaygenTask *raygenTask,
 			FactoryContainer &factory,
-			const GPUBufferRef &seedBuffer,
 			const DescriptorsRef &cameraDescriptor
 		);
 

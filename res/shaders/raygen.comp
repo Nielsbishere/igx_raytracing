@@ -4,34 +4,39 @@
 #include "defines.glsl"
 #include "trace.glsl"
 
-layout(binding=7, std430) writeonly buffer HitBuffer {
-	Hit hitBuffer[];
-};
-
 layout(binding=8, std140) readonly buffer SeedBuffer {
 	Seed seed;
 };
+
+layout(binding=0, rgba32f) writeonly uniform image2D dirT;
+layout(binding=1, rgba32f) writeonly uniform image2D uvObjectNormal;
 
 layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
 
 void main() {
 
 	//Check if out of bounds
-	//and calculate the primary for this pixel
 	
 	const uvec2 loc = gl_GlobalInvocationID.xy;
 
 	if(loc.x >= camera.width || loc.y >= camera.height)
 		return;
 
+	//Calculate primary intersection
+
 	Ray ray = calculatePrimary(loc, vec2(seed.randomX, seed.randomY));
+	
+	const Hit hit = traceGeometry(ray, noRayHit);
 	
 	//TODO: Perhaps do an intersect per tile (4 planes)
 	//		then intersect that geometry and lights
 	//		and reduce spp for primaries (reprojection)
-	
-	//Store in a cache friendly manner
 
-	const uint loc1D = calculateTiled(loc);
-	hitBuffer[loc1D] = traceGeometry(ray, noRayHit);
+	//Store only the dirT buffer and the uvObjectNormal for non sky tiles
+
+	imageStore(dirT, ivec2(loc), vec4(hit.rayDir, hit.hitT));
+
+	if (hit.hitT < noHit)
+		imageStore(uvObjectNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(hit.object), uintBitsToFloat(hit.normal)));
+
 }

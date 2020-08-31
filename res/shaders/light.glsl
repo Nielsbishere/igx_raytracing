@@ -173,7 +173,7 @@ vec3 shade(
 
 	vec3 lighting = vec3(0, 0, 0);
 
-	for(uint i = 0; i < lights.length(); ++i)
+	for(uint i = 0; i < sceneInfo.lightCount; ++i)
 		lighting += shadeLight(F0, albedo, roughness, metallic, lights[i], pos, n, v, NdotV);
 
 	const vec3 emissive = unpackColor3(m.emissive);

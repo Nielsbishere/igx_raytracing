@@ -1,6 +1,7 @@
 #ifndef CAMERA
 #define CAMERA
 #include "primitive.glsl"
+#include "rand_util.glsl"
 
 const uint 
 	ProjectionType_Default = 0, 
@@ -34,7 +35,7 @@ struct Camera {
 	float aperature;
 
 	vec3 p5;
-	uint pad0;
+	uint useUI;
 
 	vec2 invRes;
 	uvec2 tiles;
@@ -67,26 +68,21 @@ Ray calculateOmni(const vec2 centerPixel, bool isLeft) {
 	return Ray(pos, dir);
 }
 
-Ray calculateScreen(const vec2 centerPixel) {
+Ray calculateScreen(const vec2 centerPixel, bool isRight) {
 
-	const vec3 right = camera.p1 - camera.p0;
-	const vec3 up = camera.p2 - camera.p0;
+	const vec3 p0 = isRight ? camera.p3 : camera.p0;
+	const vec3 p1 = isRight ? camera.p4 : camera.p1;
+	const vec3 p2 = isRight ? camera.p5 : camera.p2;
 
-	const vec3 pos = camera.p0 + centerPixel.x * right + centerPixel.y * up;
+	const vec3 right = p1 - p0;
+	const vec3 up = p2 - p0;
+
+	const vec3 pos = p0 + centerPixel.x * right + centerPixel.y * up;
 	const vec3 dir = normalize(pos - camera.eye);
 
-	return Ray(pos, dir);
-}
+	//TODO: What happens if you shoot from camera.eye instead?
 
-Ray calculateScreenRight(const vec2 centerPixel) {
-
-	const vec3 right = camera.p4 - camera.p3;
-	const vec3 up = camera.p5 - camera.p3;
-
-	const vec3 pos = camera.p3 + centerPixel.x * right + centerPixel.y * up;
-	const vec3 dir = normalize(pos - camera.eye);
-
-	return Ray(pos, dir);
+	return Ray(camera.eye, dir);
 }
 
 Ray calculateOmniStereoTB(const vec2 centerPixel) {
@@ -100,17 +96,17 @@ Ray calculateOmniStereoLR(const vec2 centerPixel) {
 Ray calculateStereoTB(vec2 centerPixel) {
 
 	if(centerPixel.y < 0.5)
-		return calculateScreen(vec2(centerPixel.x, centerPixel.y * 2));
+		return calculateScreen(vec2(centerPixel.x, centerPixel.y * 2), false);
 
-	return calculateScreenRight(vec2(centerPixel.x, centerPixel.y * 2 - 1));
+	return calculateScreen(vec2(centerPixel.x, centerPixel.y * 2 - 1), true);
 }
 
 Ray calculateStereoLR(vec2 centerPixel) {
 
 	if(centerPixel.x < 0.5)
-		return calculateScreen(vec2(centerPixel.x * 2, centerPixel.y));
+		return calculateScreen(vec2(centerPixel.x * 2, centerPixel.y), false);
 
-	return calculateScreenRight(vec2(centerPixel.x * 2 - 1, centerPixel.y));
+	return calculateScreen(vec2(centerPixel.x * 2 - 1, centerPixel.y), true);
 }
 
 Ray calculatePrimary(const uvec2 loc, const vec2 randLoc) {
@@ -136,7 +132,7 @@ Ray calculatePrimary(const uvec2 loc, const vec2 randLoc) {
 			return calculateStereoLR(centerPixel);
 
 		default:
-			return calculateScreen(centerPixel);
+			return calculateScreen(centerPixel, false);
 	}
 }
 
@@ -155,6 +151,28 @@ uint calculateTiled(uvec2 loc) {
 	//Calculate global offset
 
 	return tile1D | inTile1D;
+}
+
+vec4 calculatePlane(vec3 p0, vec3 p1, vec3 p2) {
+
+	vec3 p1_p0 = normalize(p0 - p1);
+	vec3 p2_p0 = normalize(p2 - p0);
+
+	vec3 n = cross(p1_p0, p2_p0);
+	vec3 np = n * p0;
+
+	float d = -np.x - np.y - np.z;
+	return vec4(n, d);
+}
+
+Frustum calculateFrustum(vec2 begin, vec2 end, vec3 n, float minHitT, float maxHitT, bool isRight) {
+
+	Frustum f;
+
+	f.planes[0] = vec4(n, minHitT);			//n (facing to -z in cam space)
+	f.planes[1] = vec4(-n, -maxHitT);		//f (facing +z in cam space)
+
+	return f;
 }
 
 #endif

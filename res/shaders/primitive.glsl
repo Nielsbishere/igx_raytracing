@@ -9,14 +9,11 @@ const uint noRayHit = 0xFFFFFFFF;
 struct Hit {
 	
 	vec3 rayDir;
-	uint normal;
-
-	vec3 rayOrigin;
 	float hitT;
 
 	vec2 uv;
 	uint object;
-	uint primitive;
+	uint normal;
 
 };
 
@@ -45,6 +42,10 @@ struct Light {
 	uvec2 dir;
 	uvec2 colorType;	//colorType.y >> 16 = colorType, unpackColor3(colorType) = color
 
+};
+
+struct Frustum {
+	vec4 planes[6];
 };
 
 const uint MaterialInfo_CastReflections = 1;
@@ -272,8 +273,28 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint64_t obj,
 	return true;
 }
 
+//Sphere in plane means; the sphere intersects with the plane
+
 bool sphereInPlane(const vec4 sphere, const vec4 plane) {
 	return dot(plane.xyz, sphere.xyz) + plane.w <= sphere.w;
+}
+
+//Sphere inside plane means; if the sphere is on the positive side of the plane
+//Used for things like frustum checks
+
+bool sphereInsidePlane(const vec4 sphere, const vec4 plane) {
+	return dot(plane.xyz, sphere.xyz) + plane.w > -sphere.w;
+}
+
+//If the sphere is intersecting or inside of the frustum
+
+bool sphereInsideFrustum(const vec4 sphere, const Frustum frustum) {
+
+	for(uint i = 0; i < 2; ++i)
+		if(!sphereInsidePlane(sphere, frustum.planes[i]))
+			return false;
+
+	return true;
 }
 
 #endif
