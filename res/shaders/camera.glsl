@@ -35,11 +35,14 @@ struct Camera {
 	float aperature;
 
 	vec3 p5;
-	uint useUI;
+	uint flags;
 
 	vec2 invRes;
 	uvec2 tiles;
 };
+
+const uint CameraType_USE_UI = 1 << 0;
+const uint CameraType_USE_SUPERSAMPLING = 1 << 1;
 
 layout(binding=0, std140) uniform CameraData {
 	Camera camera;

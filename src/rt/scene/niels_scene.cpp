@@ -18,28 +18,50 @@ namespace igx::rt {
 			Material{ { 0, 0, 0 },		{ 0, 0, 0 },				{ 0, 0, 0 },	1,		0,		1 },
 			Material{ { 0, 0, 0 },		{ 0, 0, 0 },				{ 0, 0, 0 },	.25f,	.5f,	1 },
 
-			Plane{ Vec3f32(0, 1, 0),	0 },
+			Plane{ Vec3f32(0, 1, 0),	0 },					0_u32,
 
-			Cube{ Vec3f32(0, 0, 0),		Vec3f32(1, 1, 1) },
-			Cube{ Vec3f32(-2, 0, -2),	Vec3f32(-1, 1, -1) },
+			Cube{ Vec3f32(0, 0, 0),	Vec3f32(1, 1, 1) },			1_u32,
+			Cube{ Vec3f32(-2, 0, -2),	Vec3f32(-1, 1, -1) },	2_u32,
 			
-			Triangle{ Vec3f32(1, 1, 0),		Vec3f32(-1, 1, 0),	Vec3f32(1, 0, 1) },
-			Triangle{ Vec3f32(-1, 4, 0),	Vec3f32(1, 4, 0),	Vec3f32(1, 3, 1) },
-			Triangle{ Vec3f32(-1, 7, 0),	Vec3f32(1, 7, 0),	Vec3f32(1, 5, 1) },
+			Triangle{
+				Vec3f32(1, 1, 0),
+				Vec3f32(-1, 1, 0),
+				Vec3f32(1, 0, 1)
+			},													3_u32,
 
-			Sphere{ Vec3f32{ 0, 1, 5 },		1 },
-			Sphere{ Vec3f32{ 0, 1, -5 },	1 },
-			Sphere{ Vec3f32{ 3, 1, 0 },		1 },
-			Sphere{ Vec3f32{ 0, 6, 0 },		1 },
+			Triangle{
+				Vec3f32(-1, 4, 0),
+				Vec3f32(1, 4, 0),
+				Vec3f32(1, 3, 1)
+			},													4_u32,
+
+			Triangle{
+				Vec3f32(-1, 7, 0),
+				Vec3f32(1, 7, 0),
+				Vec3f32(1, 5, 1)
+			},													5_u32,
+
+			Sphere{ Vec3f32{ 0, 1, 5 },	1 },					0_u32,
+			Sphere{ Vec3f32{ 0, 1, -5 },	1 },				1_u32,
+			Sphere{ Vec3f32{ 3, 1, 0 },	1 },					2_u32,
+			Sphere{ Vec3f32{ 0, 6, 0 },	1 },					3_u32,
 
 			Light{ sunDir,				Vec3f32(0.7f) },
 			Light{ Vec3f32(0, 0.1f),	Vec3f32(1.5f),				 5,		0.3f },
 			Light{ Vec3f32(2),			Vec3f32(0.7f, 0.5f, 1.5f),	 7,		0.6f }
 		);
 
-		dynamicObjects[0] = add(Sphere{ Vec3f32(7, 2 + f32(sin(0))),						1 });
-		dynamicObjects[1] = add(Sphere{ Vec3f32(-5 + f32(sin(time)), 2 + f32(cos(time))),	1 });
-		dynamicObjects[2] = add(Sphere{ Vec3f32(f32(sin(time)), 3 + f32(cos(time))),		1 });
+		dynamicObjects[0] = addGeometry(
+			Sphere{ Vec3f32(7, 2 + f32(sin(0))),						1 }, 4_u32
+		);
+
+		dynamicObjects[1] = addGeometry(
+			Sphere{ Vec3f32(-5 + f32(sin(time)), 2 + f32(cos(time))),	1 }, 0_u32
+		);
+
+		dynamicObjects[2] = addGeometry(
+			Sphere{ Vec3f32(f32(sin(time)), 3 + f32(cos(time))),		1 }, 7_u32
+		);
 	}
 
 	void NielsScene::update(f64 dt) {

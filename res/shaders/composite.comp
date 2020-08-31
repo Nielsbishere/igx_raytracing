@@ -5,10 +5,15 @@
 #include "light.glsl"
 
 layout(binding=0, rgba8) writeonly uniform image2D rayOutput;
-layout(binding=1) uniform sampler2DMS ui;
+layout(binding=1, rgba32f) uniform image2D accumulation;
 
+layout(binding=1) uniform sampler2DMS ui;
 layout(binding=2) uniform sampler2D dirT;
 layout(binding=3) uniform sampler2D uvObjectNormal;
+
+layout(binding=8, std140) readonly buffer SeedBuffer {
+	Seed seed;
+};
 
 #ifdef GRAPHICS_DEBUG
 
@@ -213,6 +218,18 @@ void main() {
 			color = vec3(0);
 
 	#endif
+
+	//Store to accumulation buffer if needed
+
+	if((camera.flags & CameraType_USE_SUPERSAMPLING) != 0) {
+
+		if(seed.sampleCount > 1)
+			color += imageLoad(accumulation, ivec2(loc)).rgb;
+
+		imageStore(accumulation, ivec2(loc), vec4(color, 0));
+
+		color /= seed.sampleCount;
+	}
 	
 	//Exposure mapping
 
@@ -224,7 +241,7 @@ void main() {
 
 	ivec2 sampleLoc = ivec2(loc.x, camera.height - loc.y);
 
-	if(camera.useUI != 0) {
+	if((camera.flags & CameraType_USE_UI) != 0) {
 
 		vec4 uiColor = toRGB(texelFetch(ui, sampleLoc, 0));
 

@@ -132,8 +132,11 @@ namespace igx::rt {
 			isResizeRequested = true;
 			resize(nullptr, properties.value.getRes().cast<Vec2u32>());
 
-			bool ui = cameraInspector.value.useUI;
-			cameraInspector.value.useUI = false;
+			bool ui = bool(cameraInspector.value.flags & CameraFlags::USE_UI);
+			cameraInspector.value.flags &= ~CameraFlags::USE_UI;
+
+			if(properties.value.targetSamples > 1)
+				cameraInspector.value.flags |= CameraFlags::USE_SUPERSAMPLING;
 
 			update(vi, 0);
 
@@ -151,8 +154,10 @@ namespace igx::rt {
 				)
 			};
 
+			List<CommandList*> cls(properties.value.targetSamples, cl);
+
 			g.presentToCpu<RaytracingInterface, &RaytracingInterface::onRenderFinish>(
-				{ cl }, compositeTask.getTexture(), cpuOutput, this
+				cls, compositeTask.getTexture(), cpuOutput, this
 			);
 
 			//Reset to old state and wait for work to finish
@@ -164,7 +169,11 @@ namespace igx::rt {
 
 			isResizeRequested = false;
 			properties.value.shouldOutputNextFrame = false;
-			cameraInspector.value.useUI = ui;
+
+			if(ui)
+				cameraInspector.value.flags |= CameraFlags::USE_UI;
+
+			cameraInspector.value.flags &= ~CameraFlags::USE_SUPERSAMPLING;
 		}
 
 		//Regular render
@@ -176,7 +185,7 @@ namespace igx::rt {
 			compositeTask.prepareCommandList(cl);
 		}
 
-		if (!cameraInspector.value.useUI) {
+		if (!bool(cameraInspector.value.flags & CameraFlags::USE_UI)) {
 			g.present(compositeTask.getTexture(), 0, 0, swapchain, cl);
 			return;
 		}
@@ -269,7 +278,7 @@ namespace igx::rt {
 	void RaytracingInterface::onInputUpdate(ViewportInfo*, const InputDevice *dvc, InputHandle ih, bool isActive) {
 
 		if (ih == Key::Key_f1 && !isActive)
-			cameraInspector.value.useUI = !cameraInspector.value.useUI;
+			cameraInspector.value.flags ^= CameraFlags::USE_UI;
 
 		bool hasUpdated = gui.onInputUpdate(dvc, ih, isActive);
 

@@ -11,10 +11,10 @@ namespace igx::rt {
 	CompositeTask::CompositeTask(const GPUBufferRef &cameraBuffer, FactoryContainer &factory, ui::GUI &gui) :
 
 		ParentTextureRenderTask(
-			factory.getGraphics(), Texture::Info(
-				TextureType::TEXTURE_2D, GPUFormat::rgba8,
-				GPUMemoryUsage::GPU_WRITE_ONLY, 1, 1, 1, true
-			), NAME("Main task")
+			factory.getGraphics(), 
+			{ NAME("Main task"), NAME("Accumulation buffer") },
+			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba8, GPUMemoryUsage::GPU_WRITE_ONLY),
+			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba32f, GPUMemoryUsage::GPU_WRITE_ONLY)
 		),
 
 		cameraRef(cameraBuffer),
@@ -26,7 +26,7 @@ namespace igx::rt {
 		seedBuffer = {
 			g, NAME("Seed buffer"),
 			GPUBuffer::Info(
-				sizeof(Seed), GPUBufferType::STORAGE, GPUMemoryUsage::CPU_WRITE
+				sizeof(Seed), GPUBufferType::STORAGE, GPUMemoryUsage::CPU_WRITE | GPUMemoryUsage::GPU_WRITE
 			)
 		};
 
@@ -50,13 +50,13 @@ namespace igx::rt {
 		auto raytracingLayout = SceneGraph::getLayout();
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("rayOutput"), 10, TextureType::TEXTURE_2D, 0, 2,
-			ShaderAccess::COMPUTE, GPUFormat::rgba8, true
+			NAME("UI"), 10, SamplerType::SAMPLER_MS, 1, 2,
+			ShaderAccess::COMPUTE
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("UI"), 11, SamplerType::SAMPLER_MS, 1, 2,
-			ShaderAccess::COMPUTE
+			NAME("rayOutput"), 11, TextureType::TEXTURE_2D, 0, 2,
+			ShaderAccess::COMPUTE, GPUFormat::rgba8, true
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
@@ -67,6 +67,16 @@ namespace igx::rt {
 		raytracingLayout.push_back(RegisterLayout(
 			NAME("uvObjectNormal"), 13, SamplerType::SAMPLER_2D, 3, 2,
 			ShaderAccess::COMPUTE
+		));
+
+		raytracingLayout.push_back(RegisterLayout(
+			NAME("accumulation"), 14, TextureType::TEXTURE_2D, 1, 2,
+			ShaderAccess::COMPUTE, GPUFormat::rgba32f, true
+		));
+
+		raytracingLayout.push_back(RegisterLayout(
+			NAME("seed"), 15, GPUBufferType::STORAGE, 8, 2,
+			ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
 		#ifdef GRAPHICS_DEBUG
@@ -83,7 +93,7 @@ namespace igx::rt {
 			::new(debData) DebugData();
 
 			raytracingLayout.push_back(RegisterLayout(
-				NAME("DebugInfo"), 14, GPUBufferType::UNIFORM, 2, 2,
+				NAME("DebugInfo"), 16, GPUBufferType::UNIFORM, 2, 2,
 				ShaderAccess::COMPUTE, sizeof(DebugData)
 			));
 
@@ -98,6 +108,15 @@ namespace igx::rt {
 
 		#endif
 
+		nearestSampler = factory.get(
+			NAME("Nearest sampler"),
+			Sampler::Info(
+				SamplerMin::NEAREST, SamplerMag::NEAREST, SamplerMode::CLAMP_BORDER, 1
+			)
+		);
+
+		//Set up composite shader
+
 		shaderLayout = factory.get(
 			NAME("Composite shader layout"),
 			PipelineLayout::Info(raytracingLayout)
@@ -107,8 +126,11 @@ namespace igx::rt {
 			g, NAME("Composite task descriptors"),
 			Descriptors::Info(shaderLayout, 2, {
 
+				{ 10, GPUSubresource(nearestSampler, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS) },
+				{ 15, GPUSubresource(seedBuffer) }
+
 				#ifdef GRAPHICS_DEBUG
-					{ 14, GPUSubresource(debugBuffer) }
+				, { 16, GPUSubresource(debugBuffer) }
 				#endif
 
 			})
@@ -125,10 +147,31 @@ namespace igx::rt {
 			)
 		);
 
-		nearestSampler = factory.get(
-			NAME("Nearest sampler"),
-			Sampler::Info(
-				SamplerMin::NEAREST, SamplerMag::NEAREST, SamplerMode::CLAMP_BORDER, 1
+		List<RegisterLayout> initLayout = { RegisterLayout(
+			NAME("Seed buffer"), 0, GPUBufferType::STORAGE, 0, 0,
+			ShaderAccess::COMPUTE, sizeof(Seed), true
+		) };
+
+		//Set up init shader for things like the seed
+
+		initShaderLayout = factory.get(
+			NAME("Init shader layout"),
+			PipelineLayout::Info(initLayout)
+		);
+
+		initDescriptors = {
+			g, NAME("Init task descriptors"),
+			Descriptors::Info(initShaderLayout, 0, { { 0, GPUSubresource(seedBuffer) } })
+		};
+
+		initShader = factory.get(
+			NAME("Init shader"),
+			Pipeline::Info(
+				Pipeline::Flag::NONE,
+				"`/shaders/init.comp.spv",
+				{},
+				initShaderLayout,
+				Vec3u32(1, 1, 1)
 			)
 		);
 
@@ -152,11 +195,11 @@ namespace igx::rt {
 
 		auto raygen = tasks.get<RaygenTask>(0);
 
-		descriptors->updateDescriptor(10, GPUSubresource(getTexture(), TextureType::TEXTURE_2D));
-		descriptors->updateDescriptor(11, GPUSubresource(nearestSampler, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS));
+		descriptors->updateDescriptor(11, GPUSubresource(getTexture(0), TextureType::TEXTURE_2D));
 		descriptors->updateDescriptor(12, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
 		descriptors->updateDescriptor(13, GPUSubresource(nearestSampler, raygen->getTexture(1), TextureType::TEXTURE_2D));
-		descriptors->flush({ { 10, 4 } });
+		descriptors->updateDescriptor(14, GPUSubresource(getTexture(1), TextureType::TEXTURE_2D));
+		descriptors->flush({ { 11, 4 } });
 	}
 
 	void CompositeTask::switchToScene(SceneGraph *_sceneGraph) {
@@ -173,6 +216,7 @@ namespace igx::rt {
 
 		ParentTextureRenderTask::update(dt);
 
+		seed->sampleCount = 0;
 		seed->cpuOffsetX = r.range(-1000.f, 1000.f);
 		seed->cpuOffsetY = r.range(-1000.f, 1000.f);
 
@@ -184,13 +228,19 @@ namespace igx::rt {
 
 	void CompositeTask::prepareCommandList(CommandList *cl) {
 
-		//Setup all buffer CPU data
+		//Setup all GPU data
 
 		cl->add(FlushBuffer(seedBuffer, factory.getDefaultUploadBuffer()));
 
 		if(debugBuffer)
 			cl->add(FlushBuffer(debugBuffer, factory.getDefaultUploadBuffer()));
 		
+		cl->add(
+			BindDescriptors(initDescriptors),
+			BindPipeline(initShader),
+			Dispatch(1)
+		);
+
 		//All sub tasks
 
 		ParentTextureRenderTask::prepareCommandList(cl);

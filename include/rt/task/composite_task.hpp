@@ -51,9 +51,9 @@ namespace igx::rt {
 		DescriptorsRef cameraDescriptor;
 		GPUBufferRef seedBuffer, cameraRef, debugBuffer;
 
-		DescriptorsRef descriptors;
-		PipelineRef shader;
-		PipelineLayoutRef shaderLayout;
+		DescriptorsRef descriptors, initDescriptors;
+		PipelineRef shader, initShader;
+		PipelineLayoutRef shaderLayout, initShaderLayout;
 		SamplerRef nearestSampler;
 
 		SceneGraph *sceneGraph;
