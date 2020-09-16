@@ -10,7 +10,7 @@ namespace igx::rt {
 		f32 randomX, randomY;
 		f32 cpuOffsetX, cpuOffsetY;
 
-		u32 sampleCount;
+		u32 sampleCount, sampleOffset;
 	};
 
 	struct CPUCamera : public Camera {

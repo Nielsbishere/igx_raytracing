@@ -1,0 +1,64 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "defines.glsl"
+#include "rand_util.glsl"
+
+const uint WorleyData_Flag_IS_INVERTED = 1 << 0;
+
+layout(binding=0, std140) uniform NoiseData {
+
+	vec3 offset0;
+	float persistence;
+
+	vec3 offset1;
+	uint flags;
+
+	vec3 offset2;
+	uint pointsX0;
+
+	uvec3 points1;
+	uint pointsY0;
+	
+	uvec3 points2;
+	uint pointsZ0;
+
+};
+
+layout(binding=1, std140) uniform Target {
+	uvec3 targetRes;
+};
+
+layout(binding=0, r8) uniform image3D worleyOutput;
+
+layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
+
+void main() {
+	
+	const uvec3 loc = gl_GlobalInvocationID;
+
+	if(any(greaterThanEqual(loc, targetRes)))
+		return;
+
+	//Calculate three worley channels
+
+	const vec3 floc = vec3(loc) + 0.5;
+
+	uvec3 points0 = uvec3(pointsX0, pointsY0, pointsZ0);
+
+	float r = worley(targetRes, points0, offset0, floc);
+	float g = worley(targetRes, points1, offset1, floc);
+	float b = worley(targetRes, points2, offset2, floc);
+
+	//Combine layers and normalize
+
+	float denom = r + g * persistence + b * persistence * persistence;
+	float res = denom / (1 + persistence + persistence * persistence);
+
+	//Do filtering
+
+	if((flags & WorleyData_Flag_IS_INVERTED) != 0) 
+		res = 1 - res;
+
+	//Store
+	imageStore(worleyOutput, ivec3(loc), res.rrrr);
+}

@@ -45,7 +45,7 @@ namespace igx::rt {
 
 		f64 fps{};
 
-		ui::Slider<u16, 1, 2048> targetSamples = 64;
+		ui::Slider<u16, 1, 64> targetSamples = 16;
 
 		Resolution res = Resolution::UHD_8K;
 

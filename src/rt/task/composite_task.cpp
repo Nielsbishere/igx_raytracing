@@ -1,9 +1,12 @@
 #include "rt/task/composite_task.hpp"
 #include "rt/task/raygen_task.hpp"
-#include "rt/task/light_culling_task.hpp"
+#include "rt/task/shadow_task.hpp"
+#include "rt/task/cloud/cloud_task.hpp"
+#include "rt/task/shadow_task.hpp"
 #include "rt/enums.hpp"
 #include "rt/structs.hpp"
 #include "helpers/scene_graph.hpp"
+#include "igxi/convert.hpp"
 #include "../res/shaders/defines.glsl"
 
 namespace igx::rt {
@@ -44,6 +47,12 @@ namespace igx::rt {
 		};
 
 		seed = (Seed*) seedBuffer->getBuffer();
+		seed->sampleOffset = 0;
+
+		blueNoise =  {
+			factory.getGraphics(), NAME("Blue noise"),
+			igxi::Helper::loadDiskExternal(VIRTUAL_FILE("~/textures/blue_noise.png"), factory.getGraphics())
+		};
 
 		//Create descriptors and post processing shader
 
@@ -75,7 +84,15 @@ namespace igx::rt {
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("seed"), 15, GPUBufferType::STORAGE, 8, 2,
+			NAME("cloutput"), 15, SamplerType::SAMPLER_2D, 4, 2, ShaderAccess::COMPUTE
+		));
+
+		raytracingLayout.push_back(RegisterLayout(
+			NAME("lighting"), 16, SamplerType::SAMPLER_2D, 5, 2, ShaderAccess::COMPUTE
+		));
+
+		raytracingLayout.push_back(RegisterLayout(
+			NAME("seed"), 17, GPUBufferType::STORAGE, 8, 2,
 			ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
@@ -93,7 +110,7 @@ namespace igx::rt {
 			::new(debData) DebugData();
 
 			raytracingLayout.push_back(RegisterLayout(
-				NAME("DebugInfo"), 16, GPUBufferType::UNIFORM, 2, 2,
+				NAME("DebugInfo"), 18, GPUBufferType::UNIFORM, 2, 2,
 				ShaderAccess::COMPUTE, sizeof(DebugData)
 			));
 
@@ -127,10 +144,10 @@ namespace igx::rt {
 			Descriptors::Info(shaderLayout, 2, {
 
 				{ 10, GPUSubresource(nearestSampler, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS) },
-				{ 15, GPUSubresource(seedBuffer) }
+				{ 17, GPUSubresource(seedBuffer) }
 
 				#ifdef GRAPHICS_DEBUG
-				, { 16, GPUSubresource(debugBuffer) }
+				, { 18, GPUSubresource(debugBuffer) }
 				#endif
 
 			})
@@ -180,26 +197,32 @@ namespace igx::rt {
 		auto raygen = new RaygenTask(factory, seedBuffer, cameraDescriptor);
 
 		tasks.add(
-			raygen /*,
-			new LightCullingTask(raygen, factory, cameraDescriptor)*/
+
+			raygen,
+			new CloudTask(raygen, factory, gui, cameraDescriptor),
+			new ShadowTask(factory, raygen, blueNoise, seedBuffer, cameraDescriptor)
+			
+			/*,new LightCullingTask(raygen, factory, cameraDescriptor)*/
 		);
 	}
 
-	CompositeTask::~CompositeTask() {
-		gui.removeWindow(EDITOR_CAMERA);
-	}
+	CompositeTask::~CompositeTask() { }
 
 	void CompositeTask::resize(const Vec2u32 &size) {
 
 		ParentTextureRenderTask::resize(size);
 
 		auto raygen = tasks.get<RaygenTask>(0);
+		auto cloud = tasks.get<CloudTask>(1);
+		auto shadow = tasks.get<ShadowTask>(2);
 
 		descriptors->updateDescriptor(11, GPUSubresource(getTexture(0), TextureType::TEXTURE_2D));
 		descriptors->updateDescriptor(12, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
 		descriptors->updateDescriptor(13, GPUSubresource(nearestSampler, raygen->getTexture(1), TextureType::TEXTURE_2D));
 		descriptors->updateDescriptor(14, GPUSubresource(getTexture(1), TextureType::TEXTURE_2D));
-		descriptors->flush({ { 11, 4 } });
+		descriptors->updateDescriptor(15, GPUSubresource(nearestSampler, cloud->getOutput(), TextureType::TEXTURE_2D));
+		descriptors->updateDescriptor(16, GPUSubresource(nearestSampler, shadow->getTexture(), TextureType::TEXTURE_2D));
+		descriptors->flush({ { 11, 6 } });
 	}
 
 	void CompositeTask::switchToScene(SceneGraph *_sceneGraph) {
@@ -220,7 +243,7 @@ namespace igx::rt {
 		seed->cpuOffsetX = r.range(-1000.f, 1000.f);
 		seed->cpuOffsetY = r.range(-1000.f, 1000.f);
 
-		seedBuffer->flush(0, sizeof(*seed));
+		seedBuffer->flush(0, offsetof(Seed, sampleOffset));
 
 		if(debugBuffer)
 			debugBuffer->flush(0, sizeof(DebugData));
@@ -230,7 +253,10 @@ namespace igx::rt {
 
 		//Setup all GPU data
 
-		cl->add(FlushBuffer(seedBuffer, factory.getDefaultUploadBuffer()));
+		cl->add(
+			FlushBuffer(seedBuffer, factory.getDefaultUploadBuffer()),
+			FlushImage(blueNoise, factory.getDefaultUploadBuffer())
+		);
 
 		if(debugBuffer)
 			cl->add(FlushBuffer(debugBuffer, factory.getDefaultUploadBuffer()));

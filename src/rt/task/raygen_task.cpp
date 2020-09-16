@@ -83,8 +83,6 @@ namespace igx::rt {
 		}
 	}
 
-	void RaygenTask::update(f64) {  }
-
 	void RaygenTask::prepareCommandList(CommandList *cl) {
 		cl->add(
 			BindDescriptors({ cameraDescriptor, sceneGraph->getDescriptors(), descriptors }),

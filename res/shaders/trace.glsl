@@ -55,7 +55,7 @@ bool traceOcclusion(const Ray ray, const float maxDist, uint prevHit) {
 	Hit hit;
 	hit.hitT = noHit;
 
-	uint j;
+	uint j = 0;
 
 	#ifdef ALLOW_TRIANGLES
 		for(int i = 0; i < sceneInfo.triangleCount; ++i, ++j)

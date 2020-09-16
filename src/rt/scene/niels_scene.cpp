@@ -46,27 +46,21 @@ namespace igx::rt {
 			Sphere{ Vec3f32{ 3, 1, 0 },	1 },					2_u32,
 			Sphere{ Vec3f32{ 0, 6, 0 },	1 },					3_u32,
 
-			Light{ sunDir,				Vec3f32(0.7f) },
-			Light{ Vec3f32(0, 0.1f),	Vec3f32(1.5f),				 5,		0.3f },
-			Light{ Vec3f32(2),			Vec3f32(0.7f, 0.5f, 1.5f),	 7,		0.6f }
+			Light{ sunDir,				Vec3f32(0.3f) },
+			Light{ Vec3f32(0, 0.1f),	Vec3f32(1.0f, 0.f, 0.f),	 5,		0.3f },
+			Light{ Vec3f32(2),			Vec3f32(0.0f, 1.0f, 1.0f),	 7,		0.6f }
 		);
 
-		dynamicObjects[0] = addGeometry(
-			Sphere{ Vec3f32(7, 2 + f32(sin(0))),						1 }, 4_u32
-		);
+		dynamicObjects[0] = addGeometry(Sphere {}, 4_u32);
+		dynamicObjects[1] = addGeometry(Sphere {}, 0_u32);
+		dynamicObjects[2] = addGeometry(Sphere {}, 7_u32);
 
-		dynamicObjects[1] = addGeometry(
-			Sphere{ Vec3f32(-5 + f32(sin(time)), 2 + f32(cos(time))),	1 }, 0_u32
-		);
-
-		dynamicObjects[2] = addGeometry(
-			Sphere{ Vec3f32(f32(sin(time)), 3 + f32(cos(time))),		1 }, 7_u32
-		);
+		update(0);
 	}
 
 	void NielsScene::update(f64 dt) {
 
-		SceneGraph::update(dynamicObjects[0], Sphere{ Vec3f32(7, 2 + f32(sin(0))),						1 });
+		SceneGraph::update(dynamicObjects[0], Sphere { Vec3f32(7, 2 + f32(sin(0))),						1 });
 		SceneGraph::update(dynamicObjects[1], Sphere{ Vec3f32(-5 + f32(sin(time)), 2 + f32(cos(time))),	1 });
 		SceneGraph::update(dynamicObjects[2], Sphere{ Vec3f32(f32(sin(time)), 3 + f32(cos(time))),		1 });
 

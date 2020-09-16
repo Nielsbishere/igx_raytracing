@@ -14,4 +14,5 @@ void main() {
 	seed.randomX = off.x;
 	seed.randomY = off.y;
 	++seed.sampleCount;
+	++seed.sampleOffset;
 }

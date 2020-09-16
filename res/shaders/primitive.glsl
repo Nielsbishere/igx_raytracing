@@ -123,6 +123,23 @@ float unpackColorAUnorm(uvec2 col) {
 
 //Ray intersections
 
+vec2 rayIntersectionsSphere(const Ray r, const vec4 sphere) {
+
+	const vec3 dif = sphere.xyz - r.pos;
+	const float t = dot(dif, r.dir);
+
+	const vec3 Q = dif - t * r.dir;
+	const float Q2 = dot(Q, Q);
+
+	const bool outOfSphere = Q2 > sphere.w;
+
+	if(outOfSphere)
+		return vec2(noHit);
+
+	const float D = sqrt(sphere.w - Q2);
+	return vec2(t - D, t + D);
+}
+
 bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint64_t obj, uint64_t prevObj) {
 
 	const vec3 dif = sphere.xyz - r.pos;

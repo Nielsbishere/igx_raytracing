@@ -1,0 +1,124 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_shader_ballot : require
+#extension GL_ARB_gpu_shader_int64 : require
+#include "defines.glsl"
+#include "light.glsl"
+
+layout(binding=2, std140) uniform ShadowProperties {
+	uint totalSamples;
+};
+
+layout(binding=7, std430) writeonly buffer ShadowOutput32 {
+    uint shadowOutput32[];
+};
+
+layout(binding=7, std430) writeonly buffer ShadowOutput64 {
+    uint64_t shadowOutput64[];
+};
+
+layout(binding=8, std140) readonly buffer SeedBuffer {
+	Seed seed;
+};
+
+layout(binding=1) uniform sampler2D dirT;
+layout(binding=2) uniform sampler2D uvObjectNormal;
+layout(binding=3) uniform sampler2D blueNoise;
+
+//Shadows render as the following:
+//
+//16x16 thread
+//On NV: 8x 16x2 per group 
+//On AMD: 4x 16x4 per group 
+//
+//These blocks are stored linearly in memory by this group id
+//therefore: loc / (16, gl_SubGroupSizeARB / 16) = dispatchId
+//			dispatchId.x + dispatchId.y * ceil(width / 16.f)
+
+layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
+
+void main() {
+
+	//Check if out of bounds
+	
+	const uvec2 loc = gl_GlobalInvocationID.xy;
+
+	if(loc.x >= camera.width || loc.y >= camera.height)
+		return;
+
+	//Compute grid dimensions
+
+	const vec2 uv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
+
+	const vec4 _dirT = texture(dirT, uv);
+	const vec4 _uvObjectNormal = texture(uvObjectNormal, uv);
+	const uint object = floatBitsToUint(_uvObjectNormal.z);
+
+	const vec3 hitPos = camera.eye + _dirT.xyz * _dirT.w;
+
+	//Shoot rays for this warp
+	
+	uvec2 blueNoiseSiz = textureSize(blueNoise, 0);
+	vec2 blueNoiseUv = (vec2(loc) + 0.5) / vec2(blueNoiseSiz);
+
+	float f = fract(texture(blueNoise, blueNoiseUv).r + goldenRatio * float(seed.sampleOffset));
+	uint lightId = uint(f * float(sceneInfo.lightCount));
+
+	const Light light = lights[lightId];
+
+	float brightness, dist;
+	vec3 l = getDirToLight(light, hitPos, brightness, dist);
+	
+	const Ray ray = Ray(hitPos, -l);
+
+	bool hit = false;
+
+	if(_dirT.w < noHit) {
+
+		//Trace sphere lights
+		
+		if(dist >= 0) {
+		
+			const vec2 radOrigin = unpackHalf2x16(light.radOrigin);
+		
+			//The part between the origin and radius needs rays to be traced
+
+			if(dist >= radOrigin.y && dist < radOrigin.x)
+				hit = traceOcclusion(ray, dist - radOrigin.y, object);
+		
+		}
+		
+		//Trace directional
+		
+		else hit = traceOcclusion(ray, noHit, object);
+	}
+
+	uint64_t hitRays = ballotARB(hit);
+	const uint i = gl_GlobalInvocationID.z;
+
+	//Store rays for the first thread in this warp
+	//Assume 32 (NV) or 64 (AMD)
+
+	if(gl_SubGroupInvocationARB == 0) {
+
+		const uvec2 res = uvec2(camera.width, camera.height);
+
+		//If THREADS_XY changes, this has to as well
+
+		if(gl_SubGroupSizeARB == 32) { 
+	
+			//const uvec2 threads = uvec2(16, 2);
+			const uvec2 shift = uvec2(4, 1);			//log2(threads)
+			const uvec2 mask = uvec2(15, 1);			//threads - 1
+
+			shadowOutput32[indexToLight(loc, res, i, shift, mask)] = uint(hitRays);
+			return;
+		}
+	
+		//const uvec2 threads = uvec2(16, 4);
+		const uvec2 shift = uvec2(4, 2);			//log2(threads)
+		const uvec2 mask = uvec2(15, 3);			//threads - 1
+
+		shadowOutput64[indexToLight(loc, res, i, shift, mask)] = hitRays;
+	}
+}

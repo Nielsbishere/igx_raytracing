@@ -1,0 +1,224 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_gpu_shader_int64 : require
+#include "defines.glsl"
+#include "primitive.glsl"
+#include "camera.glsl"
+
+layout(binding=0, outputFormat) writeonly uniform image2D cloutput;
+
+layout(binding=0) uniform sampler3D worleySampler;
+layout(binding=1) uniform sampler2D dirT;
+
+layout(binding=1, std140) uniform CloudBuffer {
+
+	vec3 offset;
+	float heightA;
+
+	float heightB;
+	float absorption;
+	float threshold;
+	float multiplier;
+
+	float scaleXZ;
+	float scaleY;
+	uint samples;
+	uint lightSamples;
+
+	uint directionalLights;
+
+};
+
+layout(binding=0, std140) readonly buffer Lights {
+	Light lights[];
+};
+
+float beer(float v) { return exp(-v); }
+
+//Two plane intersections and a distance check for the y
+
+bool intersectCloud(Ray ray, inout float minT, inout float maxT, float hitT) {
+
+	//Check if the ray is inbetween the clouds
+
+	const float cloudStart = min(heightA, heightB);
+	const float cloudEnd = max(heightA, heightB);
+
+	const bool betweenClouds = ray.pos.y >= cloudStart && ray.pos.y <= cloudEnd;
+
+	//Get down plane intersection
+
+	Hit downHit;
+	downHit.hitT = noHit;
+
+	rayIntersectPlane(ray, vec4(0, 1, 0, cloudStart), downHit, 0, noRayHit);
+
+	//The top of our clouds
+	
+	Hit upHit;
+	upHit.hitT = noHit;
+
+	rayIntersectPlane(ray, vec4(0, 1, 0, cloudEnd), upHit, 0, noRayHit);
+
+	//No hit on any of them and we're not in the center either
+	
+	if(downHit.hitT == noHit && upHit.hitT == noHit && !betweenClouds)
+		return false;
+
+	//If we are in clouds, we need to get our exit point or GBuffer hit point
+	
+	if(betweenClouds) {
+		minT = 0;
+		maxT = min(min(downHit.hitT, upHit.hitT), hitT);
+	}
+
+	//Otherwise, we hit the other two planes, since they are perpendicular
+
+	else {
+		minT = min(downHit.hitT, upHit.hitT);
+		maxT = min(max(downHit.hitT, upHit.hitT), hitT);
+	}
+
+	//Sometimes we don't hit "anything", e.g. when inside of the cloud
+	//then we would have a minT of hitT, which could be noHit
+
+	if(maxT == noHit)
+		maxT = minT + abs(heightB - heightA);
+
+	return true;
+}
+
+//Density
+//Adapted from http://www.diva-portal.org/smash/get/diva2:1223894/FULLTEXT01.pdf
+
+float calcPh(vec3 p) {
+	return (p.y - min(heightA, heightB)) / abs(heightB - heightA);
+}
+
+float D(vec3 p) {
+
+	//Calculate variables altering cloud shape by height
+	//E.g. rounding bottom and top
+
+	const float ph = calcPh(p);
+
+	const float SRb = clamp(ph / 0.07, 0, 1);
+	const float SRt = 1 - clamp((ph - 0.2) / 0.8, 0, 1);		//TODO: Weather map
+	const float SA = SRb * SRt;
+
+	//Get cloud shape from grid sample
+
+	p = p * vec3(scaleXZ, scaleY, scaleXZ) * 0.001 + offset * 0.01;
+	float s = texture(worleySampler, p).r;
+
+	float cloudShape = max(s - threshold, 0) * multiplier;
+
+	return cloudShape * SA;
+}
+
+//Light march, adapted from https://github.com/SebLague/Clouds/blob/master/Assets/Scripts/Clouds/Shaders/CloudSky.shader
+
+vec3 marchLights(vec3 p) {
+
+	vec3 light = vec3(0);
+
+	if(lightSamples == 0)
+		return vec3(1, 1, 1);
+
+	//There could be something blocking the sun(s)
+	//For example, terrain or an airplane, this check is just a little expensive though 
+	//But could generate really pretty pictures with mountains
+	//For now, no tracing light visibility there yet (too many points)
+
+	for(uint i = 0; i < directionalLights; ++i) {
+
+		vec3 dir = -decodeNormal(lights[i].dir);
+
+		//Since our point is in the cloud, we can assume minT == 0
+
+		float minT, maxT;
+
+		intersectCloud(Ray(p, dir), minT, maxT, noHit);
+
+		float marchDist = (maxT - minT) / lightSamples;
+
+		float d = 0;
+
+		for(uint j = 0; j < lightSamples; ++j)
+			d += D(p + dir * (marchDist * j + minT)) * marchDist;
+
+		light += beer(d * absorption) * unpackColor3(lights[i].colorType);
+	}
+
+	return light;
+}
+
+layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
+
+void main() {
+
+	//Generate primaries
+	
+	const uvec2 loc = gl_GlobalInvocationID.xy;
+
+	if(loc.x >= camera.width || loc.y >= camera.height)
+		return;
+		
+	const ivec2 iloc = ivec2(loc);
+	const vec2 uv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
+
+	vec4 _dirT = texture(dirT, uv);
+
+	Ray ray = Ray(
+		camera.eye,
+		_dirT.xyz
+	);
+
+	float hitT = _dirT.w;
+
+	//Intersect cloud
+
+	float minT, maxT;
+
+	if(!intersectCloud(ray, minT, maxT, hitT)) {
+		imageStore(cloutput, iloc, vec4(0));
+		return;
+	}
+
+	//Our intersection has less prio than the backbuffer
+
+	if(minT >= hitT) {
+		imageStore(cloutput, iloc, vec4(0));
+		return;
+	}
+	
+	//Calculate intersection info
+
+	float maxDist = maxT - minT;
+	float marchDist = maxDist / samples;
+	
+	float currDist = minT;
+	float transmittance = 1;
+
+	vec3 color = vec3(0);
+	
+	for(uint i = 0; i < lightSamples; ++i) {
+
+		float t = minT + i * marchDist;
+		vec3 p = ray.pos + ray.dir * t;
+		float d = D(p);
+
+		if(d > 0) {
+
+			color += marchDist * d * transmittance * marchLights(p);
+			transmittance *= beer(marchDist * d * absorption);
+
+			if(transmittance < 0.01) {
+				transmittance = 0;
+				break;
+			}
+		}
+	}
+
+	imageStore(cloutput, iloc, vec4(color, 1 - transmittance));
+}

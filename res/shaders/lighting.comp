@@ -1,0 +1,98 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_ARB_shader_ballot : require
+#extension GL_ARB_gpu_shader_int64 : require
+#include "defines.glsl"
+#include "light_rt.glsl"
+
+layout(binding=2, std140) uniform ShadowProperties {
+	uint totalSamples;
+};
+
+layout(binding=8, std140) readonly buffer SeedBuffer {
+	Seed seed;
+};
+
+layout(binding=1) uniform sampler2D dirT;
+layout(binding=2) uniform sampler2D uvObjectNormal;
+layout(binding=3) uniform sampler2D blueNoise;
+
+layout(binding=0, outputFormat) writeonly uniform image2D lighting;
+
+//Shadows render as the following:
+//
+//16x16 thread
+//On NV: 8x 16x2 per group 
+//On AMD: 4x 16x4 per group 
+//
+//These blocks are stored linearly in memory by this group id
+//therefore: loc / (16, gl_SubGroupSizeARB / 16) = dispatchId
+//			dispatchId.x + dispatchId.y * ceil(width / 16.f)
+
+layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
+
+void main() {
+
+	//Check if out of bounds
+	
+	const uvec2 loc = gl_GlobalInvocationID.xy;
+
+	if(loc.x >= camera.width || loc.y >= camera.height)
+		return;
+
+	//Compute grid dimensions
+
+	const vec2 uv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
+
+	const vec4 _dirT = texture(dirT, uv);
+
+	if(_dirT.w == noHit) {
+		imageStore(lighting, ivec2(loc), vec4(0));
+		return;
+	}
+
+	const vec4 _uvObjectNormal = texture(uvObjectNormal, uv);
+	const uint object = floatBitsToUint(_uvObjectNormal.z);
+
+	const vec3 hitPos = camera.eye + _dirT.xyz * _dirT.w;
+
+	//Unpack material values
+
+	const Material m = materials[materialIndices[object]];
+
+	const vec3 albedo = unpackColor3(m.albedoMetallic);
+	const float metallic = unpackColorAUnorm(m.albedoMetallic);
+	const float roughness = unpackColorAUnorm(m.ambientRoughness);
+
+	const vec3 F0 = mix(vec3(0.04), albedo, metallic);
+
+	const vec3 n = decodeNormalLQ(floatBitsToUint(_uvObjectNormal.w));
+	const vec3 v = _dirT.xyz;
+	const float NdotV = max(dot(v, -n), 0);
+
+	//Shoot rays for this warp
+
+	vec3 light = vec3(0);
+
+	uvec2 blueNoiseSiz = textureSize(blueNoise, 0);
+	vec2 blueNoiseUv = (vec2(loc) + 0.5) / vec2(blueNoiseSiz);
+
+	for(uint i = 0; i < totalSamples; ++i) {
+	
+		float f = fract(texture(blueNoise, blueNoiseUv).r + goldenRatio * float(seed.sampleOffset));
+		uint lightId = uint(f * float(sceneInfo.lightCount));
+
+		if(!didHit(loc, i, uvec2(camera.width, camera.height)))
+			light += shadeLight(F0, albedo, roughness, metallic, lights[lightId], hitPos, n, v, NdotV);
+	}
+
+	//Since we've taken random samples, we don't want to just average them
+	//That could result in Nx lower brightness
+	//We want to treat these samples as if we sampled all lights for this pixel
+
+	light = light / totalSamples * sceneInfo.lightCount;
+
+	//
+
+	imageStore(lighting, ivec2(loc), vec4(light, 1));
+}

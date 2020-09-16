@@ -25,11 +25,14 @@ namespace igx::rt {
 		Roughness,
 		Emissive,
 		Transparency,
-		Sky,
+		Skybox,
 		Lighting,
 		Reflection,
 		Shadow,
-		Lights_per_pixel
+		Lights_per_pixel,
+		Cloud_lighting,
+		Cloud_transparency,
+		Sky
 	);
 
 	struct DebugData {
@@ -50,6 +53,8 @@ namespace igx::rt {
 
 		DescriptorsRef cameraDescriptor;
 		GPUBufferRef seedBuffer, cameraRef, debugBuffer;
+
+		TextureRef blueNoise;
 
 		DescriptorsRef descriptors, initDescriptors;
 		PipelineRef shader, initShader;

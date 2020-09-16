@@ -95,11 +95,11 @@ vec3 cookTorrance(
 
 //Per light shading
 
-vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, inout float maxDist) {
+vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, inout float dist) {
 
 	vec3 l;
 	brightness = 1;
-	maxDist = noHit;
+	dist = -1;
 
 	//Point
 
@@ -108,13 +108,12 @@ vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, in
 		l = pos - light.pos;
 		const float dst = length(l);
 
-		const float normDist = dst / unpackHalf2x16(light.radOrigin).x;
+		const vec2 radOrigin = unpackHalf2x16(light.radOrigin);
+		const float r = radOrigin.r  - radOrigin.g;
+		const float d = max(dst - radOrigin.g, 0);
 
-		brightness = max(1 - normDist * normDist, 0);
-
-		//Calculate params for point light shadows
-
-		maxDist = dst;				//TODO: This is along the direction of the light, it should be along the distance of the ray
+		brightness = sqrt(max(r * r - d * d, 0)) / r;
+		dist = dst;
 	}
 
 	//Directional
@@ -136,8 +135,8 @@ vec3 shadeLight(
 	const float NdotV
 ) {
 
-	float brightness, maxDist;
-	vec3 l = getDirToLight(light, pos, brightness, maxDist);
+	float brightness, dst;
+	vec3 l = getDirToLight(light, pos, brightness, dst);
 
 	//Calculate color
 
@@ -157,6 +156,7 @@ vec3 shade(
 	const vec3 n, 
 	const vec3 v,
 	const float NdotV,
+	const vec3 light,
 	const vec3 reflected
 ) {
 
@@ -171,17 +171,12 @@ vec3 shade(
 	const vec3 kS = fresnelSchlickRoughness(F0, NdotV, metallic, albedo, roughness);
 	const vec3 kD = (1 - kS) * (1 - metallic);
 
-	vec3 lighting = vec3(0, 0, 0);
-
-	for(uint i = 0; i < sceneInfo.lightCount; ++i)
-		lighting += shadeLight(F0, albedo, roughness, metallic, lights[i], pos, n, v, NdotV);
-
 	const vec3 emissive = unpackColor3(m.emissive);
 
-	return (ambient + kD / pi) * albedo + kS * reflected + lighting + emissive;
+	return (ambient + kD / pi) * albedo + kS * reflected + light + emissive;
 }
 
-vec3 shadeHit(Ray ray, Hit hit, vec3 reflection) {
+vec3 shadeHit(Ray ray, Hit hit, vec3 light, vec3 reflection) {
 
 	if(hit.hitT == noHit)
 		return vec3(sampleSkybox(ray.dir));
@@ -194,10 +189,10 @@ vec3 shadeHit(Ray ray, Hit hit, vec3 reflection) {
 
 	const Material m = materials[materialIndices[hit.object]];
 
-	return shade(m, position, n, v, NdotV, reflection);
+	return shade(m, position, n, v, NdotV, light, reflection);
 }
 
-vec3 shadeHitFinalRecursion(Ray ray, Hit hit) {
+vec3 shadeHitFinalRecursion(Ray ray, Hit hit, vec3 light) {
 
 	if(hit.hitT == noHit)
 		return vec3(sampleSkybox(ray.dir));
@@ -210,7 +205,7 @@ vec3 shadeHitFinalRecursion(Ray ray, Hit hit) {
 
 	const vec3 reflected = sampleSkybox(reflect(v, n));
 
-	return shade(materials[materialIndices[hit.object]], position, n, v, NdotV, reflected);
+	return shade(materials[materialIndices[hit.object]], position, n, v, NdotV, light, reflected);
 }
 
 uint indexToLight(uvec2 loc, uvec2 res, uint lightId, uvec2 shift, uvec2 mask) {

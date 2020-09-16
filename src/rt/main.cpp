@@ -85,6 +85,7 @@ namespace igx::rt {
 	void RaytracingInterface::resize(const ViewportInfo *vp, const Vec2u32& size) {
 
 		g.wait();
+		cl->clear();
 
 		CPUCamera &camera = cameraInspector;
 
@@ -140,7 +141,6 @@ namespace igx::rt {
 
 			update(vi, 0);
 
-			cl->clear();
 			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
 			sceneGraph.fillCommandList(cl);
 			compositeTask.prepareCommandList(cl);
@@ -184,7 +184,7 @@ namespace igx::rt {
 			sceneGraph.fillCommandList(cl);
 			compositeTask.prepareCommandList(cl);
 		}
-
+		
 		if (!bool(cameraInspector.value.flags & CameraFlags::USE_UI)) {
 			g.present(compositeTask.getTexture(), 0, 0, swapchain, cl);
 			return;

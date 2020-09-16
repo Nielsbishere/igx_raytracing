@@ -7,7 +7,8 @@ namespace igx::rt {
 		EDITOR_MAIN,
 		EDITOR_CAMERA,
 		EDITOR_CLOUDS,
-		EDITOR_DEBUG
+		EDITOR_DEBUG,
+		EDITOR_CLOUD_NOISE
 	};
 
 	oicExposedEnum(

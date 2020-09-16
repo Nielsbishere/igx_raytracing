@@ -26,7 +26,7 @@ namespace igx::rt {
 
 		void prepareCommandList(CommandList *cl) override;
 
-		void update(f64 dt) override;
+		void update(f64) override {}
 		void resize(const Vec2u32 &size) override;
 
 		void switchToScene(SceneGraph *sceneGraph) override;

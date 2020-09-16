@@ -6,8 +6,47 @@
 struct Seed {
 	float randomX, randomY;
 	float cpuOffsetX, cpuOffsetY;
-	uint sampleCount;
+	uint sampleCount, sampleOffset;
 };
+
+const float goldenRatio = 0.61803398875f;
+
+//Beter random funcs from wisp (https://github.com/TeamWisp/WispRenderer)
+
+uint initRand(uint v0, uint v1) {
+
+	uint s0 = 0;
+
+	for (uint n = 0; n < 16; n++) {
+		s0 += 0x9e3779b9;
+		v0 += ((v1 << 4) + 0xa341316c) ^ (v1 + s0) ^ ((v1 >> 5) + 0xc8013ea4);
+		v1 += ((v0 << 4) + 0xad90777d) ^ (v0 + s0) ^ ((v0 >> 5) + 0x7e95761e);
+	}
+
+	return v0;
+}
+
+//Get 'random' value [0, 1]
+float nextRand(inout uint s) {
+	s = (1664525u * s + 1013904223u);
+	return float(s & 0x00FFFFFF) / float(0x01000000);
+}
+
+//Uniform uint (yoinked from http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html)
+//But modified to work for ints
+
+uint uVdC(uint seed) {
+     seed = (seed << 16u) | (seed >> 16u);
+     seed = ((seed & 0x55555555u) << 1u) | ((seed & 0xAAAAAAAAu) >> 1);
+     seed = ((seed & 0x33333333u) << 2u) | ((seed & 0xCCCCCCCCu) >> 2);
+     seed = ((seed & 0x0F0F0F0Fu) << 4u) | ((seed & 0xF0F0F0F0u) >> 4);
+     seed = ((seed & 0x00FF00FFu) << 8u) | ((seed & 0xFF00FF00u) >> 8);
+     return seed;
+ }
+
+ float fVdC(uint seed) {
+	return float(uVdC(seed)) * 2.3283064365386963e-10;	//div by 2^32, gives us a range [0, 1>
+ }
 
 //Generic random funcs
 
@@ -128,5 +167,57 @@ float snoise(vec4 v){
                + dot(m1*m1, vec2( dot( p3, x3 ), dot( p4, x4 ) ) ) ) ;
 
 }
+
+//Worley noise
+
+float worley(uvec3 res, uvec3 pointsRes, vec3 offset, vec3 floc) {
+
+	//Calculate constants
+
+	const vec3 invRes = 1 / vec3(res);
+	const vec3 invPointRes = 1 / vec3(pointsRes);
+
+	const vec3 pointPerPixel = pointsRes * invRes;
+
+	const vec3 currentPoint = floor(floc * pointPerPixel);
+	const vec3 pixelPerPoint = res * invPointRes;
+
+	float squareDist = 1;
+
+	//Get the current point and the points in the neighboring cells
+	//Get the minimum distance between them
+
+	for(int k = -1; k <= 1; ++k)
+		for(int j = -1; j <= 1; ++j)
+			for(int i = -1; i <= 1; ++i) {
+
+				//Grab current point in neighbor cell
+
+				vec3 local = vec3(i, j, k);
+				vec3 global = currentPoint + local;
+
+				//Ensure out of bounds access is threated as wrap
+				//But we don't have a texture, so manual 
+
+				global += vec3(lessThan(global, vec3(0))) * pointsRes;
+				global -= vec3(greaterThanEqual(global, pointsRes)) * pointsRes;
+
+				//Grab random offset in cell
+
+				vec3 sampledOffset = rand(offset + global);
+
+				global += sampledOffset;
+
+				//Calculate the square distance and check if it's less
+
+				vec3 localPoint = (global * pixelPerPoint - floc) * pointPerPixel;
+				float localSquareDist = dot(localPoint, localPoint);
+
+				squareDist = min(squareDist, localSquareDist);
+			}
+
+	return sqrt(squareDist);
+}
+
 
 #endif
