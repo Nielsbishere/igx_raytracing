@@ -4,6 +4,7 @@
 namespace igx::rt {
 
 	enum Editors : u32 {
+		EDITOR_SCENE_GRAPH,
 		EDITOR_MAIN,
 		EDITOR_CAMERA,
 		EDITOR_CLOUDS,

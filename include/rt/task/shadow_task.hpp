@@ -11,7 +11,7 @@ namespace igx::rt {
 
 	struct ShadowProperties {
 
-		ui::Slider<u32, 1, 128> Shadow_samples = 1;
+		ui::Slider<u32, 1, 128> Shadow_samples = 64;
 
 		Inflect(Shadow_samples);
 
@@ -27,9 +27,9 @@ namespace igx::rt {
 		RaygenTask *raygen;
 
 		GPUBufferRef shadowProperties, shadowOutput, seed;
-		SamplerRef nearestSampler, nearestWrapSampler;
+		SamplerRef nearestSampler, linearSampler;
 
-		TextureRef blueNoise;
+		TextureRef blueNoiseR, blueNoiseRg;
 
 		PipelineRef shadowShader, lightingShader;
 		PipelineLayoutRef shadowLayout, lightingLayout;
@@ -45,7 +45,8 @@ namespace igx::rt {
 		ShadowTask(
 			FactoryContainer &factory,
 			RaygenTask *raygen,
-			const TextureRef &blueNoise,
+			const TextureRef &blueNoiseR,
+			const TextureRef &blueNoiseRg,
 			const GPUBufferRef &seed,
 			const DescriptorsRef &cameraDescriptor
 		);

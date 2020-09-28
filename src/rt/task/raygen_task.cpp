@@ -12,7 +12,9 @@ namespace igx::rt {
 		const DescriptorsRef &cameraDescriptor
 	) :
 		TextureRenderTask(
-			factory.getGraphics(), 
+			factory.getGraphics(),
+			NAME("Raygen task"),
+			Vec4f32(0, 0.25, 1, 1),
 			{ NAME("dirT"), NAME("uvObjectNormal") },
 			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba32f, GPUMemoryUsage::GPU_WRITE_ONLY), 
 			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba32f, GPUMemoryUsage::GPU_WRITE_ONLY)

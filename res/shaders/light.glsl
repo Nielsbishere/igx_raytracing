@@ -95,30 +95,39 @@ vec3 cookTorrance(
 
 //Per light shading
 
-vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, inout float dist) {
+vec3 getDirToLight(const Light light, const vec3 pos, inout float brightness, inout float dist, vec2 random) {
 
 	vec3 l;
 	brightness = 1;
 	dist = -1;
 
+	vec2 radOrigin = max(unpackHalf2x16(light.radOrigin), 0);
+	radOrigin.y = min(radOrigin.y, radOrigin.x);
+
 	//Point
 
 	if(unpackColorA(light.colorType) == LightType_Point) {
 
+		//Point on hemisphere 
+
 		l = pos - light.pos;
-		const float dst = length(l);
+		dist = length(l);
 
-		const vec2 radOrigin = unpackHalf2x16(light.radOrigin);
-		const float r = radOrigin.r  - radOrigin.g;
-		const float d = max(dst - radOrigin.g, 0);
+		vec3 p = randomPointOnHemisphere(random, light.pos, radOrigin.g, normalize(l));
 
-		brightness = sqrt(max(r * r - d * d, 0)) / r;
-		dist = dst;
+		//Calculate lighting 
+
+		l = pos - p;
+
+		const float r = radOrigin.r - radOrigin.g;
+		const float d = max(dist - radOrigin.g, 0);
+
+		brightness = pow(smoothstep(r, 0, d), uintBitsToFloat(light.dir.x));
 	}
 
 	//Directional
 
-	else l = decodeNormal(light.dir);
+	else l = getSunDirection(random, normalize(decodeNormal(light.dir)), radOrigin.r);
 
 	return normalize(l);
 }
@@ -132,11 +141,12 @@ vec3 shadeLight(
 	const vec3 pos,
 	const vec3 n,
 	const vec3 v,
-	const float NdotV
+	const float NdotV,
+	const vec2 random
 ) {
 
 	float brightness, dst;
-	vec3 l = getDirToLight(light, pos, brightness, dst);
+	vec3 l = getDirToLight(light, pos, brightness, dst, random);
 
 	//Calculate color
 

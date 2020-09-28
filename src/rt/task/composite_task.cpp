@@ -15,6 +15,8 @@ namespace igx::rt {
 
 		ParentTextureRenderTask(
 			factory.getGraphics(), 
+			NAME("Composite task"),
+			Vec4f32(0, 0, 1, 1),
 			{ NAME("Main task"), NAME("Accumulation buffer") },
 			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba8, GPUMemoryUsage::GPU_WRITE_ONLY),
 			Texture::Info(TextureType::TEXTURE_2D, GPUFormat::rgba32f, GPUMemoryUsage::GPU_WRITE_ONLY)
@@ -49,9 +51,14 @@ namespace igx::rt {
 		seed = (Seed*) seedBuffer->getBuffer();
 		seed->sampleOffset = 0;
 
-		blueNoise =  {
-			factory.getGraphics(), NAME("Blue noise"),
-			igxi::Helper::loadDiskExternal(VIRTUAL_FILE("~/textures/blue_noise.png"), factory.getGraphics())
+		blueNoiseR =  {
+			factory.getGraphics(), NAME("Blue noise r"),
+			igxi::Helper::loadDiskExternal(VIRTUAL_FILE("~/textures/blue_noise_r.png"), factory.getGraphics())
+		};
+
+		blueNoiseRg =  {
+			factory.getGraphics(), NAME("Blue noise rg"),
+			igxi::Helper::loadDiskExternal(VIRTUAL_FILE("~/textures/blue_noise_rg.png"), factory.getGraphics())
 		};
 
 		//Create descriptors and post processing shader
@@ -96,7 +103,7 @@ namespace igx::rt {
 			ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
-		#ifdef GRAPHICS_DEBUG
+		#ifndef NDEBUG
 
 			debugBuffer = {
 				g, NAME("Debug buffer"),
@@ -146,7 +153,7 @@ namespace igx::rt {
 				{ 10, GPUSubresource(nearestSampler, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS) },
 				{ 17, GPUSubresource(seedBuffer) }
 
-				#ifdef GRAPHICS_DEBUG
+				#ifndef NDEBUG
 				, { 18, GPUSubresource(debugBuffer) }
 				#endif
 
@@ -200,7 +207,7 @@ namespace igx::rt {
 
 			raygen,
 			new CloudTask(raygen, factory, gui, cameraDescriptor),
-			new ShadowTask(factory, raygen, blueNoise, seedBuffer, cameraDescriptor)
+			new ShadowTask(factory, raygen, blueNoiseR, blueNoiseRg, seedBuffer, cameraDescriptor)
 			
 			/*,new LightCullingTask(raygen, factory, cameraDescriptor)*/
 		);
@@ -255,7 +262,8 @@ namespace igx::rt {
 
 		cl->add(
 			FlushBuffer(seedBuffer, factory.getDefaultUploadBuffer()),
-			FlushImage(blueNoise, factory.getDefaultUploadBuffer())
+			FlushImage(blueNoiseR, factory.getDefaultUploadBuffer()),
+			FlushImage(blueNoiseRg, factory.getDefaultUploadBuffer())
 		);
 
 		if(debugBuffer)

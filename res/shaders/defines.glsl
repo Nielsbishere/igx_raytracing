@@ -4,16 +4,11 @@
 #define ALLOW_TRIANGLES
 #define ALLOW_CUBES
 
-#define GRAPHICS_DEBUG
-
 #define LIGHTS_PER_TILE 32
 
 //TODO: Figure out if indices to Light is better or just a Light[] per tile
 
-//#define DISABLE_SHADOWS
-//#define DISABLE_REFLECTIONS
-//TODO: #define SOFT_SHADOWS
-//TODO: #define FULL_PRECISION
+//#define FULL_PRECISION
 
 //TODO: Compile for different thread counts
 

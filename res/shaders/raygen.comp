@@ -24,6 +24,8 @@ void main() {
 
 	//Calculate primary intersection
 
+	//TODO: Should use blueNoiseRg
+
 	Ray ray = calculatePrimary(loc, vec2(seed.randomX, seed.randomY));
 	
 	const Hit hit = traceGeometry(ray, noRayHit);

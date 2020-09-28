@@ -51,14 +51,14 @@ source_group("Shader binaries" FILES ${shaderBinaries})
 
 if(doShaderRecreate)
 
-		add_custom_command(
-			TARGET rtigx 
-			PRE_BUILD COMMAND
-			ARGS
-			"${CMAKE_CURRENT_SOURCE_DIR}/res/shaders/compile"
-			"$<$<CONFIG:debug>:-d>"
-			${shaders}
-		)
+	add_custom_command(
+		TARGET rtigx 
+		PRE_BUILD COMMAND
+		ARGS
+		"${CMAKE_CURRENT_SOURCE_DIR}/res/shaders/compile.sh"
+		"$<$<CONFIG:debug>:-d>"
+		${shaders}
+	)
 
 endif()
 
@@ -78,15 +78,9 @@ add_virtual_files(
 		textures
 	FILES
 		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/qwantani_4k.hdr
-)
-
-add_virtual_files(
-	DIRECTORY
-		${CMAKE_CURRENT_SOURCE_DIR}/res/textures
-	NAME
-		textures
-	FILES
-		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/blue_noise.png
+		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/blue_noise_r.png
+		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/blue_noise_rg.png
+		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/blue_noise_rgba.png
 )
 
 configure_icon(rtigx "${CMAKE_CURRENT_SOURCE_DIR}/igx/res/icon.ico")

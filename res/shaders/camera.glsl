@@ -50,8 +50,6 @@ layout(binding=0, std140) uniform CameraData {
 
 //Setting up primaries
 
-const float pi = 3.1415927410125732421875;
-
 Ray calculateOmni(const vec2 centerPixel, bool isLeft) {
 
 	const vec2 spherical = vec2(centerPixel.x - 0.5, 0.5 - centerPixel.y) * vec2(2 * pi, pi);

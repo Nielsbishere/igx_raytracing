@@ -14,7 +14,7 @@ namespace igx::rt {
 		FactoryContainer &factory, ui::GUI &gui,
 		const DescriptorsRef &camera
 	) :
-		RenderTask(factory.getGraphics()),
+		RenderTask(factory.getGraphics(), NAME("Cloud task"), Vec4f32(1, 1, 1, 1)),
 		gui(gui),
 		factory(factory),
 		primaries(primaries)

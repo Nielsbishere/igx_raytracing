@@ -54,7 +54,7 @@ namespace igx::rt {
 		DescriptorsRef cameraDescriptor;
 		GPUBufferRef seedBuffer, cameraRef, debugBuffer;
 
-		TextureRef blueNoise;
+		TextureRef blueNoiseRg, blueNoiseR;
 
 		DescriptorsRef descriptors, initDescriptors;
 		PipelineRef shader, initShader;

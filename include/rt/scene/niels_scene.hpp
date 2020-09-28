@@ -10,7 +10,7 @@ namespace igx::rt {
 
 	public:
 
-		NielsScene(FactoryContainer &factory);
+		NielsScene(ui::GUI &gui, FactoryContainer &factory);
 
 		void update(f64 dt) override;
 

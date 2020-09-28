@@ -6,7 +6,8 @@
 namespace igx::rt {
 
 	CloudNoiseTask::CloudNoiseTask(FactoryContainer &factory, const String &name, const GPUBufferRef &data, const TextureRef &output) :
-		RenderTask(factory.getGraphics()), factory(factory), output(output), data(data)
+		RenderTask(factory.getGraphics(), NAME("Cloud noise"), Vec4f32(0.5f, 0.5f, 0.5f, 1.f)), 
+		factory(factory), output(output), data(data)
 	{
 		Vec3u32 inf = output->getDimensions().cast<Vec3u32>();
 

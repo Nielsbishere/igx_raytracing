@@ -15,7 +15,7 @@ layout(binding=8, std140) readonly buffer SeedBuffer {
 
 layout(binding=1) uniform sampler2D dirT;
 layout(binding=2) uniform sampler2D uvObjectNormal;
-layout(binding=3) uniform sampler2D blueNoise;
+layout(binding=3) uniform sampler2D blueNoiseRgba;
 
 layout(binding=0, outputFormat) writeonly uniform image2D lighting;
 
@@ -74,16 +74,18 @@ void main() {
 
 	vec3 light = vec3(0);
 
-	uvec2 blueNoiseSiz = textureSize(blueNoise, 0);
-	vec2 blueNoiseUv = (vec2(loc) + 0.5) / vec2(blueNoiseSiz);
+	uvec2 blueNoiseSiz = textureSize(blueNoiseRgba, 0);
+	vec2 blueNoiseUv = (vec2(loc) + rand(loc + vec2(seed.randomX, seed.randomY))) / vec2(blueNoiseSiz);
 
 	for(uint i = 0; i < totalSamples; ++i) {
 	
-		float f = fract(texture(blueNoise, blueNoiseUv).r + goldenRatio * float(seed.sampleOffset));
-		uint lightId = uint(f * float(sceneInfo.lightCount));
+		vec2 uv = blueNoiseUv + hammersley(i, totalSamples);
+		vec3 blueNoise = texture(blueNoiseRgba, uv).rgb;
+
+		uint lightId = uint(blueNoise.r * float(sceneInfo.lightCount));
 
 		if(!didHit(loc, i, uvec2(camera.width, camera.height)))
-			light += shadeLight(F0, albedo, roughness, metallic, lights[lightId], hitPos, n, v, NdotV);
+			light += shadeLight(F0, albedo, roughness, metallic, lights[lightId], hitPos, n, v, NdotV, blueNoise.gb);
 	}
 
 	//Since we've taken random samples, we don't want to just average them

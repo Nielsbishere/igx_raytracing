@@ -9,7 +9,8 @@ struct Seed {
 	uint sampleCount, sampleOffset;
 };
 
-const float goldenRatio = 0.61803398875f;
+const float goldenRatio = 0.61803398875;
+const float pi = 3.1415927410125732421875;
 
 //Beter random funcs from wisp (https://github.com/TeamWisp/WispRenderer)
 
@@ -24,6 +25,63 @@ uint initRand(uint v0, uint v1) {
 	}
 
 	return v0;
+}
+
+
+//Generate points on sphere point (http://corysimon.github.io/articles/uniformdistn-on-sphere/)
+
+vec3 randomPointOnUnitSphere(vec2 random) {
+
+	vec2 polar = vec2((2 * pi) * random.x, acos(1 - 2 * random.y));
+	vec2 sinPolar = sin(polar), cosPolar = cos(polar);
+	
+	return vec3(sinPolar.x * cosPolar.y, sinPolar.x * sinPolar.y, cosPolar.x);
+}
+
+//Convert sphere to hemisphere
+
+vec3 randomPointOnHemisphere(vec2 random, vec3 origin, float size, vec3 l) {
+
+	vec3 n = randomPointOnUnitSphere(random);
+
+	if(dot(n, l) < 0)
+		n *= 1;
+
+	return origin + n * size;
+}
+
+//Generate direction towards a "sun" (https://github.com/TeamWisp/WispRenderer/blob/master/resources/shaders/rand_util.hlsl)
+
+vec3 getPerpendicularVector(vec3 u) {
+
+	vec3 a = abs(u);
+
+	uint xm = uint(a.x - a.y < 0 && a.x - a.z < 0);
+	uint ym = a.y - a.z < 0 ? 1 ^ xm : 0;
+	uint zm = 1 ^ (xm | ym);
+
+	return cross(u, vec3(xm, ym, zm));
+}
+
+vec3 getSunDirection(vec2 random, vec3 direction, float angularExtent) {
+
+	float s = random.x;
+	float r = random.y;
+
+	float h = cos(angularExtent);
+
+	float phi = (2 * pi) * s;
+
+	float z = h + (1.0f - h) * r;
+	float sinT = sqrt(1.0f - z * z);
+
+	float x = cos(phi) * sinT;
+	float y = sin(phi) * sinT;
+
+	vec3 bitangent = getPerpendicularVector(direction);
+	vec3 tangent = cross(bitangent, direction);
+
+	return bitangent * x + tangent * y + direction * z;
 }
 
 //Get 'random' value [0, 1]
@@ -47,6 +105,10 @@ uint uVdC(uint seed) {
  float fVdC(uint seed) {
 	return float(uVdC(seed)) * 2.3283064365386963e-10;	//div by 2^32, gives us a range [0, 1>
  }
+
+vec2 hammersley(uint seed, uint N) {
+	return vec2(float(seed) / N, fVdC(seed));
+}
 
 //Generic random funcs
 

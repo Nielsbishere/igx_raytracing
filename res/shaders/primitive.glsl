@@ -130,13 +130,14 @@ vec2 rayIntersectionsSphere(const Ray r, const vec4 sphere) {
 
 	const vec3 Q = dif - t * r.dir;
 	const float Q2 = dot(Q, Q);
+	const float R2 = sphere.w * sphere.w;
 
-	const bool outOfSphere = Q2 > sphere.w;
+	const bool outOfSphere = Q2 > R2;
 
 	if(outOfSphere)
 		return vec2(noHit);
 
-	const float D = sqrt(sphere.w - Q2);
+	const float D = sqrt(R2 - Q2);
 	return vec2(t - D, t + D);
 }
 
@@ -147,9 +148,10 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint64_t 
 
 	const vec3 Q = dif - t * r.dir;
 	const float Q2 = dot(Q, Q);
+	const float R2 = sphere.w * sphere.w;
 
-	const bool outOfSphere = Q2 > sphere.w;
-	const float hitT = t - sqrt(sphere.w - Q2);
+	const bool outOfSphere = Q2 > R2;
+	const float hitT = t - sqrt(R2 - Q2);
 
 	if(!outOfSphere && obj != prevObj && hitT >= 0 && hitT < hit.hitT) {
 

@@ -17,7 +17,7 @@ layout(binding=8, std140) readonly buffer SeedBuffer {
 	Seed seed;
 };
 
-#ifdef GRAPHICS_DEBUG
+#ifdef DEBUG
 
 	const uint DEBUG_TYPE_DEFAULT				= 0;
 	const uint DEBUG_TYPE_RAY_DIR				= 1;
@@ -78,16 +78,17 @@ void main() {
 	const Ray prim = Ray(camera.eye, hit.rayDir);
 	const vec3 hitPos = hit.hitT * prim.dir + prim.pos;
 
-	#ifndef GRAPHICS_DEBUG
+	vec3 color = vec3(0);
+
+	#ifndef DEBUG
 		
-		vec4 cloud = texture(cloutput, asUv);
+		//vec4 cloud = texture(cloutput, asUv);
+		vec4 cloud = vec4(0);
 		vec3 light = texture(lighting, asUv).rgb;
 
 		color = mix(shadeHitFinalRecursion(prim, hit, light), cloud.rgb, cloud.a);
 
 	#else
-
-		vec3 color = vec3(0);
 
 		switch(debugType) {
 
@@ -183,7 +184,7 @@ void main() {
 
 			case DEBUG_TYPE_LIGHTING:
 
-				if(hit.hitT >= noHit) 
+				if(hit.hitT < noHit) 
 					color = texture(lighting, asUv).rgb;
 
 				break;

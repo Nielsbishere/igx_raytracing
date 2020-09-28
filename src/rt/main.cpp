@@ -15,20 +15,19 @@ using namespace oic;
 
 namespace igx::rt {
 
-	RaytracingInterface::RaytracingInterface(Graphics& g) : 
-		g(g), gui(g), factory(g), 
-		cameraBuffer{
+	RaytracingInterface::RaytracingInterface(Graphics &g) :
+		g(g), gui(g), factory(g),
+		cameraBuffer {
 			g, NAME("Camera buffer"),
 			GPUBuffer::Info(
 				sizeof(Camera), GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE
 			)
-		}, 
+	},
 		compositeTask(cameraBuffer, factory, gui),
-		sceneGraph(factory)
+		sceneGraph(gui, factory)
 	{
 		compositeTask.switchToScene(&sceneGraph);
 		compositeTask.prepareMode(RenderMode::MQ);
-
 		//TODO: If kS == 0, there won't be a reflection
 		//		If kD == 0, there won't be shadow rays
 
