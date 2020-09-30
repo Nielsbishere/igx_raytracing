@@ -51,16 +51,6 @@ namespace igx::rt {
 		seed = (Seed*) seedBuffer->getBuffer();
 		seed->sampleOffset = 0;
 
-		blueNoiseR =  {
-			factory.getGraphics(), NAME("Blue noise r"),
-			igxi::Helper::loadDiskExternal(VIRTUAL_FILE("~/textures/blue_noise_r.png"), factory.getGraphics())
-		};
-
-		blueNoiseRg =  {
-			factory.getGraphics(), NAME("Blue noise rg"),
-			igxi::Helper::loadDiskExternal(VIRTUAL_FILE("~/textures/blue_noise_rg.png"), factory.getGraphics())
-		};
-
 		//Create descriptors and post processing shader
 
 		auto raytracingLayout = SceneGraph::getLayout();
@@ -207,7 +197,7 @@ namespace igx::rt {
 
 			raygen,
 			new CloudTask(raygen, factory, gui, cameraDescriptor),
-			new ShadowTask(factory, raygen, blueNoiseR, blueNoiseRg, seedBuffer, cameraDescriptor)
+			new ShadowTask(factory, raygen, seedBuffer, cameraDescriptor)
 			
 			/*,new LightCullingTask(raygen, factory, cameraDescriptor)*/
 		);
@@ -261,9 +251,7 @@ namespace igx::rt {
 		//Setup all GPU data
 
 		cl->add(
-			FlushBuffer(seedBuffer, factory.getDefaultUploadBuffer()),
-			FlushImage(blueNoiseR, factory.getDefaultUploadBuffer()),
-			FlushImage(blueNoiseRg, factory.getDefaultUploadBuffer())
+			FlushBuffer(seedBuffer, factory.getDefaultUploadBuffer())
 		);
 
 		if(debugBuffer)

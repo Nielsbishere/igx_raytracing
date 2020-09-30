@@ -13,9 +13,8 @@ layout(binding=8, std140) readonly buffer SeedBuffer {
 	Seed seed;
 };
 
-layout(binding=1) uniform sampler2D dirT;
-layout(binding=2) uniform sampler2D uvObjectNormal;
-layout(binding=3) uniform sampler2D blueNoiseRgba;
+layout(binding=1) uniform sampler2D dirObject;
+layout(binding=2) uniform sampler2D uvNormal;
 
 layout(binding=0, outputFormat) writeonly uniform image2D lighting;
 
@@ -42,19 +41,23 @@ void main() {
 
 	//Compute grid dimensions
 
-	const vec2 uv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
+	vec2 uv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
 
-	const vec4 _dirT = texture(dirT, uv);
+	const vec4 _dirObject = texture(dirObject, uv);
+	const uint object = floatBitsToUint(_dirObject.w);
 
-	if(_dirT.w == noHit) {
-		imageStore(lighting, ivec2(loc), vec4(0));
+	if(object == noRayHit) {
+
+		#ifdef DEBUG
+			imageStore(lighting, ivec2(loc), vec4(0));
+		#endif
+
 		return;
 	}
 
-	const vec4 _uvObjectNormal = texture(uvObjectNormal, uv);
-	const uint object = floatBitsToUint(_uvObjectNormal.z);
+	const vec3 hitPos = camera.eye + _dirObject.xyz;
 
-	const vec3 hitPos = camera.eye + _dirT.xyz * _dirT.w;
+	const vec4 _uvNormal = texture(uvNormal, uv);
 
 	//Unpack material values
 
@@ -66,26 +69,26 @@ void main() {
 
 	const vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
-	const vec3 n = decodeNormalLQ(floatBitsToUint(_uvObjectNormal.w));
-	const vec3 v = _dirT.xyz;
+	const vec3 n = decodeNormal(floatBitsToUint(_uvNormal.zw));
+	const vec3 v = normalize(_dirObject.xyz);
 	const float NdotV = max(dot(v, -n), 0);
 
 	//Shoot rays for this warp
 
 	vec3 light = vec3(0);
 
-	uvec2 blueNoiseSiz = textureSize(blueNoiseRgba, 0);
-	vec2 blueNoiseUv = (vec2(loc) + rand(loc + vec2(seed.randomX, seed.randomY))) / vec2(blueNoiseSiz);
+	uvec2 tilingSiz = uvec2(128, 128);
+	uv = (vec2(loc) + rand(loc + vec2(seed.randomX, seed.randomY))) / vec2(tilingSiz);
 
 	for(uint i = 0; i < totalSamples; ++i) {
 	
-		vec2 uv = blueNoiseUv + hammersley(i, totalSamples);
-		vec3 blueNoise = texture(blueNoiseRgba, uv).rgb;
+		vec2 uvi = uv + hammersley(i, totalSamples);
+		vec2 random = rand(uvi);
 
-		uint lightId = uint(blueNoise.r * float(sceneInfo.lightCount));
+		uint lightId = 0; //uint(blueNoise.r * float(sceneInfo.lightCount));
 
 		if(!didHit(loc, i, uvec2(camera.width, camera.height)))
-			light += shadeLight(F0, albedo, roughness, metallic, lights[lightId], hitPos, n, v, NdotV, blueNoise.gb);
+			light += shadeLight(F0, albedo, roughness, metallic, lights[lightId], hitPos, n, v, NdotV, random);
 	}
 
 	//Since we've taken random samples, we don't want to just average them

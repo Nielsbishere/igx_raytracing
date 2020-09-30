@@ -15,7 +15,7 @@ Hit traceGeometry(const Ray ray, uint prevHit) {
 
 	hit.uv = vec2(0);
 	hit.object = 0;
-	hit.normal = 0;
+	hit.n = vec3(0);
 
 	//TODO: Only get normal and uv of one object
 

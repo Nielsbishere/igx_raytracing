@@ -78,9 +78,6 @@ add_virtual_files(
 		textures
 	FILES
 		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/qwantani_4k.hdr
-		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/blue_noise_r.png
-		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/blue_noise_rg.png
-		${CMAKE_CURRENT_SOURCE_DIR}/res/textures/blue_noise_rgba.png
 )
 
 configure_icon(rtigx "${CMAKE_CURRENT_SOURCE_DIR}/igx/res/icon.ico")

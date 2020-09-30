@@ -23,9 +23,9 @@ function compileVendor {
 
 	if [ $mode == "RELEASE" ] 
 	then
-		spirv-remap -v --opt all --map all --dce all --input "$(basename "$2")" --output $PWD
-	else
 		spirv-remap -v --do-everything --input "$(basename "$2")" --output $PWD
+	else
+		spirv-remap -v --opt all --map all --dce all --input "$(basename "$2")" --output $PWD
 	fi
 		
 	if [ $? -ne 0 ]; 

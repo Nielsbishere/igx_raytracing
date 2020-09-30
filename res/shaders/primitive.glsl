@@ -13,7 +13,8 @@ struct Hit {
 
 	vec2 uv;
 	uint object;
-	uint normal;
+
+	vec3 n;
 
 };
 
@@ -160,7 +161,7 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint64_t 
 		const vec3 o = hitT * r.dir + r.pos;
 		const vec3 normal = normalize(sphere.xyz - o);
 
-		hit.normal = encodeNormalLQ(normal);
+		hit.n = normal;
 
 		//Convert lat/long to uv
 		//Limits of asin and atan are pi/2, so we divide by that to get normalized coordinates
@@ -192,7 +193,7 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint64_t ob
 	if(hitT >= 0 && obj != prevObj && hitT < hit.hitT) {
 
 		hit.hitT = hitT;
-		hit.normal = encodeNormalLQ(dif > 0 ? -dir : dir);
+		hit.n = dif > 0 ? -dir : dir;
 
 		vec3 o = hitT * r.dir + r.pos;
 
@@ -219,26 +220,30 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint64_t ob
 	const vec3 h = cross(r.dir, p2_p0);
 	const float a = dot(p1_p0, h);
 	
-	if (abs(a) < 0) return false;
+	if (abs(a) < 0) 
+		return false;
 	
 	const float f = 1 / a;
 	const vec3 s = r.pos - p0;
 	const float u = f * dot(s, h);
 	
-	if (u < 0 || u > 1) return false; 
+	if (u < 0 || u > 1)
+		return false; 
 	
 	const vec3 q = cross(s, p1_p0);
 	const float v = f * dot(r.dir, q);
 	
-	if (v < 0 || u + v > 1) return false;
+	if (v < 0 || u + v > 1) 
+		return false;
 	
 	const float t = f * dot(p2_p0, q);
 	
-	if (t <= 0 || obj == prevObj || t >= hit.hitT) return false;
+	if (t <= 0 || obj == prevObj || t >= hit.hitT)
+		return false;
 
 	hit.uv = vec2(u, v);
 	hit.hitT = t;
-	hit.normal = encodeNormalLQ(normalize(cross(p1 - p0, p2 - p0)) * -sign(a));
+	hit.n = normalize(cross(p1 - p0, p2 - p0)) * -sign(a);
 
 	return true;
 }
@@ -270,19 +275,19 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint64_t obj,
 
 	if(tmin == mi.x) {
 		int isLeft = int(mi.x == startDir.x);
-		hit.normal = encodeNormalLQ(vec3(isLeft * 2 - 1, 0, 0));
+		hit.n = vec3(isLeft * 2 - 1, 0, 0);
 		hit.uv = pos.yz;
 	}
 
 	else if(tmin == mi.y) {
 		int isDown = int(mi.y == startDir.y);
-		hit.normal = encodeNormalLQ(vec3(0, isDown * 2 - 1, 0));
+		hit.n = vec3(0, isDown * 2 - 1, 0);
 		hit.uv = pos.xz;
 	}
 
 	else {
 		int isBack = int(mi.z == startDir.z);
-		hit.normal = encodeNormalLQ(vec3(0, 0, isBack * 2 - 1));
+		hit.n = vec3(0, 0, isBack * 2 - 1);
 		hit.uv = pos.xy;
 	}
 
@@ -309,7 +314,7 @@ bool sphereInsidePlane(const vec4 sphere, const vec4 plane) {
 
 bool sphereInsideFrustum(const vec4 sphere, const Frustum frustum) {
 
-	for(uint i = 0; i < 2; ++i)
+	for(uint i = 0; i < 6; ++i)
 		if(!sphereInsidePlane(sphere, frustum.planes[i]))
 			return false;
 

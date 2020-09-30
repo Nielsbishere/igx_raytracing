@@ -10,8 +10,6 @@ namespace igx::rt {
 	ShadowTask::ShadowTask(
 		FactoryContainer &factory,
 		RaygenTask *raygen,
-		const TextureRef &blueNoiseR,
-		const TextureRef &blueNoiseRg,
 		const GPUBufferRef &seed,
 		const DescriptorsRef &cameraDescriptor
 	) :
@@ -27,9 +25,7 @@ namespace igx::rt {
 		factory(factory),
 		raygen(raygen),
 		cameraDescriptor(cameraDescriptor),
-		seed(seed),
-		blueNoiseR(blueNoiseR),
-		blueNoiseRg(blueNoiseRg)
+		seed(seed)
 	{
 		//Setup uniforms and samplers
 
@@ -64,26 +60,18 @@ namespace igx::rt {
 			NAME("Seed"), 11, GPUBufferType::STORAGE, 8, 2, ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
-		raytracingLayout.push_back(RegisterLayout(
-			NAME("blueNoiseR"), 12, SamplerType::SAMPLER_2D, 3, 2, ShaderAccess::COMPUTE
-		));
-
-		raytracingLayout.push_back(RegisterLayout(
-			NAME("blueNoiseRg"), 13, SamplerType::SAMPLER_2D, 4, 2, ShaderAccess::COMPUTE
-		));
-
 		usz stride = g.getVendor() == Vendor::NVIDIA ? sizeof(u32) : sizeof(u64);
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("ShadowOutput"), 14, GPUBufferType::STRUCTURED, 7, 2, ShaderAccess::COMPUTE, stride, true
+			NAME("ShadowOutput"), 13, GPUBufferType::STRUCTURED, 7, 2, ShaderAccess::COMPUTE, stride, true
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("dirT"), 15, SamplerType::SAMPLER_2D, 1, 2, ShaderAccess::COMPUTE
+			NAME("dirObject"), 14, SamplerType::SAMPLER_2D, 1, 2, ShaderAccess::COMPUTE
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("uvObjectNormal"), 16, SamplerType::SAMPLER_2D, 2, 2, ShaderAccess::COMPUTE
+			NAME("uvNormal"), 15, SamplerType::SAMPLER_2D, 2, 2, ShaderAccess::COMPUTE
 		));
 
 		//Setup shadow
@@ -98,9 +86,7 @@ namespace igx::rt {
 			Descriptors::Info(
 				shadowLayout, 2, {
 					{ 10, GPUSubresource(shadowProperties) },
-					{ 11, GPUSubresource(seed) },
-					{ 12, GPUSubresource(linearSampler, blueNoiseR, TextureType::TEXTURE_2D) },
-					{ 13, GPUSubresource(linearSampler, blueNoiseRg, TextureType::TEXTURE_2D) }
+					{ 11, GPUSubresource(seed) }
 				}
 			)
 		};
@@ -117,16 +103,17 @@ namespace igx::rt {
 				"`/shaders/shadow.comp" + ext,
 				{},
 				shadowLayout,
-				Vec3u32(THREADS_XY, THREADS_XY, 1)
+				Vec3u32(THREADS_XY, THREADS_XY, 2)
 			)
 		);
 
 		//Lighting shader
 
-		raytracingLayout[14].isWritable = false;
+		raytracingLayout[13].isWritable = false;
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("lighting"), 17, TextureType::TEXTURE_2D, 0, 2, ShaderAccess::COMPUTE, GPUFormat::outputFormat, true
+			NAME("lighting"), 16, TextureType::TEXTURE_2D, 0, 2, 
+			ShaderAccess::COMPUTE, GPUFormat::outputFormat, true
 		));
 
 		lightingLayout = factory.get(
@@ -139,9 +126,7 @@ namespace igx::rt {
 			Descriptors::Info(
 				lightingLayout, 2, {
 					{ 10, GPUSubresource(shadowProperties) },
-					{ 11, GPUSubresource(seed) },
-					{ 12, GPUSubresource(linearSampler, blueNoiseR, TextureType::TEXTURE_2D) },
-					{ 13, GPUSubresource(linearSampler, blueNoiseRg, TextureType::TEXTURE_2D) }
+					{ 11, GPUSubresource(seed) }
 				}
 			)
 		};
@@ -179,19 +164,18 @@ namespace igx::rt {
 			GPUBuffer::Info(stride * warps1D, GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY)
 		};
 
-		shadowDescriptors->updateDescriptor(14, GPUSubresource(shadowOutput));
-		shadowDescriptors->updateDescriptor(15, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
-		shadowDescriptors->updateDescriptor(16, GPUSubresource(nearestSampler, raygen->getTexture(1), TextureType::TEXTURE_2D));
-		shadowDescriptors->flush({ { 14, 3 } });
+		shadowDescriptors->updateDescriptor(13, GPUSubresource(shadowOutput));
+		shadowDescriptors->updateDescriptor(14, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
+		shadowDescriptors->flush({ { 13, 2 } });
 
-		lightingDescriptors->updateDescriptor(14, GPUSubresource(shadowOutput));
-		lightingDescriptors->updateDescriptor(15, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
-		lightingDescriptors->updateDescriptor(16, GPUSubresource(nearestSampler, raygen->getTexture(1), TextureType::TEXTURE_2D));
-		lightingDescriptors->updateDescriptor(17, GPUSubresource(getTexture(0), TextureType::TEXTURE_2D));
-		lightingDescriptors->flush({ { 14, 4 } });
+		lightingDescriptors->updateDescriptor(13, GPUSubresource(shadowOutput));
+		lightingDescriptors->updateDescriptor(14, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
+		lightingDescriptors->updateDescriptor(15, GPUSubresource(nearestSampler, raygen->getTexture(1), TextureType::TEXTURE_2D));
+		lightingDescriptors->updateDescriptor(16, GPUSubresource(getTexture(0), TextureType::TEXTURE_2D));
+		lightingDescriptors->flush({ { 13, 4 } });
 	}
 
-	void ShadowTask::switchToScene(SceneGraph *_sceneGraph) { 
+	void ShadowTask::switchToScene(SceneGraph *_sceneGraph) {
 		if (sceneGraph != _sceneGraph) {
 			markNeedCmdUpdate();
 			sceneGraph = _sceneGraph;

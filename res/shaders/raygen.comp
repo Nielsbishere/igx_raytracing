@@ -8,8 +8,8 @@ layout(binding=8, std140) readonly buffer SeedBuffer {
 	Seed seed;
 };
 
-layout(binding=0, rgba32f) writeonly uniform image2D dirT;
-layout(binding=1, rgba32f) writeonly uniform image2D uvObjectNormal;
+layout(binding=0, rgba32f) writeonly uniform image2D dirObject;
+layout(binding=1, rgba32f) writeonly uniform image2D uvNormal;
 
 layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
 
@@ -36,9 +36,18 @@ void main() {
 
 	//Store only the dirT buffer and the uvObjectNormal for non sky tiles
 
-	imageStore(dirT, ivec2(loc), vec4(hit.rayDir, hit.hitT));
+	vec4 _dirObject = vec4(hit.rayDir * hit.hitT, uintBitsToFloat(hit.object));
 
-	if (hit.hitT < noHit)
-		imageStore(uvObjectNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(hit.object), uintBitsToFloat(hit.normal)));
+	if(hit.hitT == noHit)
+		_dirObject = vec4(hit.rayDir, uintBitsToFloat(noRayHit));
+
+	imageStore(dirObject, ivec2(loc), _dirObject);
+
+	#ifdef DEBUG
+		imageStore(uvNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(encodeNormal(hit.n))));
+	#else
+		if (hit.hitT < noHit)
+			imageStore(uvNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(encodeNormal(hit.n))));
+	#endif
 
 }

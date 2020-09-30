@@ -10,22 +10,30 @@ layout(binding=2, std140) uniform ShadowProperties {
 };
 
 #ifdef VENDOR_NV
+
 	layout(binding=7, std430) writeonly buffer ShadowOutput32 {
 	    uint shadowOutput32[];
 	};
+	
+	const uvec2 shift = uvec2(4, 1);			//log2(threads)
+	const uvec2 mask = uvec2(15, 1);			//threads - 1
+
 #else
+
 	layout(binding=7, std430) writeonly buffer ShadowOutput64 {
 	    uint64_t shadowOutput64[];
 	};
+
+	const uvec2 shift = uvec2(4, 2);			//log2(threads)
+	const uvec2 mask = uvec2(15, 3);			//threads - 1
+
 #endif
 
 layout(binding=8, std140) readonly buffer SeedBuffer {
 	Seed seed;
 };
 
-layout(binding=1) uniform sampler2D dirT;
-layout(binding=2) uniform sampler2D uvObjectNormal;
-layout(binding=3) uniform sampler2D blueNoiseRgba;
+layout(binding=1) uniform sampler2D dirObject;
 
 //Shadows render as the following:
 //
@@ -37,7 +45,7 @@ layout(binding=3) uniform sampler2D blueNoiseRgba;
 //therefore: loc / (16, gl_SubGroupSizeARB / 16) = dispatchId
 //			dispatchId.x + dispatchId.y * ceil(width / 16.f)
 
-layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 1) in;
+layout(local_size_x = THREADS_XY, local_size_y = THREADS_XY, local_size_z = 2) in;
 
 void main() {
 
@@ -46,42 +54,58 @@ void main() {
 	const uvec2 loc = gl_GlobalInvocationID.xy;
 	const uint i = gl_GlobalInvocationID.z;
 
-	if(loc.x >= camera.width || loc.y >= camera.height)
+	if(loc.x >= camera.width || loc.y >= camera.height || i >= totalSamples)
 		return;
+
+	const uvec2 res = uvec2(camera.width, camera.height);
 
 	//Compute grid dimensions
 
-	const vec2 uv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
+	vec2 uv = (vec2(loc) + 0.5) / vec2(camera.width, camera.height);
 
-	const vec4 _dirT = texture(dirT, uv);
-	const vec4 _uvObjectNormal = texture(uvObjectNormal, uv);
-	const uint object = floatBitsToUint(_uvObjectNormal.z);
+	const vec4 _dirObject = texture(dirObject, uv);
+	const uint object = floatBitsToUint(_dirObject.w);
 
-	const vec3 hitPos = camera.eye + _dirT.xyz * _dirT.w;
+	if(ballotARB(object != noRayHit) == 0) {
+
+		#ifdef DEBUG
+		
+			#ifdef VENDOR_NV
+				shadowOutput32[indexToLight(loc, res, i, shift, mask)] = 0;
+			#else
+				shadowOutput64[indexToLight(loc, res, i, shift, mask)] = 0;
+			#endif
+
+		#endif
+
+		return;
+	}
+
+	const vec3 hitPos = camera.eye + _dirObject.xyz;
 
 	//Shoot rays for this warp
 	
-	uvec2 blueNoiseSiz = textureSize(blueNoiseRgba, 0);
-	vec2 blueNoiseUv = (vec2(loc) + rand(loc + vec2(seed.randomX, seed.randomY))) / vec2(blueNoiseSiz);
+	uvec2 tilingSiz = uvec2(128, 128);
+	uv = (vec2(loc) + rand(loc + vec2(seed.randomX, seed.randomY))) / vec2(tilingSiz);
 
-	blueNoiseUv += hammersley(i, totalSamples);
+	uv += hammersley(i, totalSamples);
 
-	vec3 blueNoise = texture(blueNoiseRgba, blueNoiseUv).rgb;
+	vec2 random = rand(uv);
 
-	float f = blueNoise.r;
-	
-	uint lightId = uint(blueNoise.r * float(sceneInfo.lightCount));
+	//TODO: Point lights
+
+	uint lightId = 0; //uint(blueNoise.r * float(sceneInfo.lightCount));
 
 	const Light light = lights[lightId];
 
 	float brightness, dist;
-	vec3 l = getDirToLight(light, hitPos, brightness, dist, blueNoise.gb);
+	vec3 l = getDirToLight(light, hitPos, brightness, dist, random);
 	
 	const Ray ray = Ray(hitPos, -l);
 
 	bool hit = false;
 
-	if(_dirT.w < noHit) {
+	if(object != noRayHit) {
 
 		//Trace sphere lights
 		
@@ -108,26 +132,12 @@ void main() {
 
 	if(gl_SubGroupInvocationARB == 0) {
 
-		const uvec2 res = uvec2(camera.width, camera.height);
-
 		//If THREADS_XY changes, this has to as well
 		
 		#ifdef VENDOR_NV
-	
-			//const uvec2 threads = uvec2(16, 2);
-			const uvec2 shift = uvec2(4, 1);			//log2(threads)
-			const uvec2 mask = uvec2(15, 1);			//threads - 1
-
 			shadowOutput32[indexToLight(loc, res, i, shift, mask)] = uint(hitRays);
-
 		#else
-	
-			//const uvec2 threads = uvec2(16, 4);
-			const uvec2 shift = uvec2(4, 2);			//log2(threads)
-			const uvec2 mask = uvec2(15, 3);			//threads - 1
-
 			shadowOutput64[indexToLight(loc, res, i, shift, mask)] = hitRays;
-
 		#endif
 	}
 }

@@ -8,8 +8,8 @@ layout(binding=0, rgba8) writeonly uniform image2D rayOutput;
 layout(binding=1, rgba32f) uniform image2D accumulation;
 
 layout(binding=1) uniform sampler2DMS ui;
-layout(binding=2) uniform sampler2D dirT;
-layout(binding=3) uniform sampler2D uvObjectNormal;
+layout(binding=2) uniform sampler2D dirObject;
+layout(binding=3) uniform sampler2D uvNormal;
 layout(binding=4) uniform sampler2D cloutput;
 layout(binding=5) uniform sampler2D lighting;
 
@@ -63,27 +63,35 @@ void main() {
 	
 	//Calculate hit
 	
-	const vec4 _dirT = texture(dirT, asUv);
-	const vec4 _uvObjectNormal = texture(uvObjectNormal, asUv);
+	const vec4 _dirObject = texture(dirObject, asUv);
+	const vec4 _uvNormal = texture(uvNormal, asUv);
 
-	const Hit hit = Hit(
+	const uint object = floatBitsToUint(_dirObject.w);
 
-		_dirT.xyz, _dirT.w, 
+	Hit hit = Hit(
 
-		_uvObjectNormal.xy, 
-		floatBitsToUint(_uvObjectNormal.z), 
-		floatBitsToUint(_uvObjectNormal.w)
+		normalize(_dirObject.xyz), 
+		
+		length(_dirObject.xyz), 
+
+		_uvNormal.xy, 
+		object,
+
+		decodeNormal(floatBitsToUint(_uvNormal.zw))
 	);
 
+	if(object == noRayHit)
+		hit.hitT = noHit;
+
 	const Ray prim = Ray(camera.eye, hit.rayDir);
-	const vec3 hitPos = hit.hitT * prim.dir + prim.pos;
+	const vec3 hitPos = prim.pos + _dirObject.xyz;
 
 	vec3 color = vec3(0);
+	vec4 cloud = vec4(0);
 
 	#ifndef DEBUG
 		
 		//vec4 cloud = texture(cloutput, asUv);
-		vec4 cloud = vec4(0);
 		vec3 light = texture(lighting, asUv).rgb;
 
 		color = mix(shadeHitFinalRecursion(prim, hit, light), cloud.rgb, cloud.a);
@@ -94,7 +102,7 @@ void main() {
 
 			case DEBUG_TYPE_DEFAULT: {
 
-				vec4 cloud = texture(cloutput, asUv);
+				//vec4 cloud = texture(cloutput, asUv);
 				vec3 light = texture(lighting, asUv).rgb;
 
 				color = mix(shadeHitFinalRecursion(prim, hit, light), cloud.rgb, cloud.a);
@@ -108,7 +116,7 @@ void main() {
 			case DEBUG_TYPE_NORMALS:
 
 				if(hit.hitT < noHit)
-					color = decodeNormalLQ(hit.normal) * 0.5 + 0.5;
+					color = hit.n * 0.5 + 0.5;
 
 				break;
 
@@ -192,7 +200,7 @@ void main() {
 			case DEBUG_TYPE_REFLECTION:
 
 				if(hit.hitT < noHit)
-					color = sampleSkybox(reflect(prim.dir, decodeNormalLQ(hit.normal)));
+					color = sampleSkybox(reflect(prim.dir, hit.n));
 
 				break;
 
@@ -207,7 +215,7 @@ void main() {
 			case DEBUG_TYPE_SKY: {
 
 				vec3 skybox = sampleSkybox(prim.dir);
-				vec4 cloud = texture(cloutput, asUv);
+				//vec4 cloud = texture(cloutput, asUv);
 
 				color = mix(skybox, cloud.rgb, cloud.a);
 
