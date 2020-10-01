@@ -39,7 +39,7 @@ namespace igx::rt {
 			factory.getGraphics(), NAME(name + " shader"),
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
-				"`/shaders/cloud_noise.comp.spv",
+				VIRTUAL_FILE("shaders/cloud_noise.comp.spv"),
 				{},
 				layout,
 				Vec3u32(THREADS_XY, THREADS_XY, 1)

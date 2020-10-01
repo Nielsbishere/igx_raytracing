@@ -1,9 +1,9 @@
-#include "rt/scene/niels_scene.hpp"
+#include "niels_scene.hpp"
 
 namespace igx::rt {
 
 	NielsScene::NielsScene(ui::GUI &gui, FactoryContainer &factory):
-		SceneGraph(gui, factory, NAME("Niels scene"), VIRTUAL_FILE("~/textures/qwantani_4k.hdr"))
+		SceneGraph(gui, factory, NAME("Niels scene"), VIRTUAL_FILE("textures/qwantani_4k.hdr"))
 	{
 		Vec3f32 sunDir = Vec3f32{ -0.5f, -2, -1 }.normalize();
 
@@ -51,9 +51,9 @@ namespace igx::rt {
 			Light{ Vec3f32(2),			Vec3f32(0.0f, 1.0f, 1.0f),	 7,		0.6f }
 		);
 
-		dynamicObjects[0] = addGeometry(Sphere {}, 4_u32);
-		dynamicObjects[1] = addGeometry(Sphere {}, 0_u32);
-		dynamicObjects[2] = addGeometry(Sphere {}, 7_u32);
+		dynamicObjects[0] = addGeometry(Sphere{}, 4_u32);
+		dynamicObjects[1] = addGeometry(Sphere{}, 0_u32);
+		dynamicObjects[2] = addGeometry(Sphere{}, 7_u32);
 
 		update(0);
 	}

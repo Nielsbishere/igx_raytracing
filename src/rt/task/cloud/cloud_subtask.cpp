@@ -31,7 +31,7 @@ namespace igx::rt {
 			NAME(name + " shader"), 
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
-				"`/shaders/clouds.comp.spv",
+				VIRTUAL_FILE("shaders/clouds.comp.spv"),
 				{},
 				shaderLayout,
 				Vec3u32(THREADS_XY, THREADS_XY, 1)

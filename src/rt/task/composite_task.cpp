@@ -154,7 +154,7 @@ namespace igx::rt {
 			NAME("Composite shader"),
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
-				"`/shaders/composite.comp.spv",
+				VIRTUAL_FILE("shaders/composite.comp.spv"),
 				{},
 				shaderLayout,
 				Vec3u32(THREADS_XY, THREADS_XY, 1)
@@ -182,7 +182,7 @@ namespace igx::rt {
 			NAME("Init shader"),
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
-				"`/shaders/init.comp.spv",
+				VIRTUAL_FILE("shaders/init.comp.spv"),
 				{},
 				initShaderLayout,
 				Vec3u32(1, 1, 1)

@@ -61,7 +61,7 @@ namespace igx::rt {
 			NAME("Raygen shader"),
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
-				"`/shaders/raygen.comp.spv",
+				VIRTUAL_FILE("shaders/raygen.comp.spv"),
 				{},
 				shaderLayout,
 				Vec3u32(THREADS_XY, THREADS_XY, 1)

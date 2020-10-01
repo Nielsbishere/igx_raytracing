@@ -8,9 +8,12 @@
 #include "types/mat.hpp"
 #include "utils/random.hpp"
 #include "utils/inflect.hpp"
-#include "scene/niels_scene.hpp"
 
 #include "../res/shaders/defines.glsl"
+
+namespace igx {
+	class SceneGraph;
+}
 
 namespace igx::rt {
 
@@ -68,13 +71,13 @@ namespace igx::rt {
 				inflector.inflect(
 					this, recursion, memberNames, 
 					(const f64&) fps, targetOutput, targetSamples, res, targetSize, isPortrait,
-					Button<RaytracingProperties, &RaytracingProperties::exportToPNG>{}
+					igx::ui::Button<RaytracingProperties, &RaytracingProperties::exportToPNG>{}
 				);
 
 			else inflector.inflect(
 				this, recursion, memberNames, 
 				(const f64&) fps, targetOutput, targetSamples, res, (const Vec2u16&) targetSize, isPortrait,
-				Button<RaytracingProperties, &RaytracingProperties::exportToPNG>{}
+				igx::ui::Button<RaytracingProperties, &RaytracingProperties::exportToPNG>{}
 			);
 
 			if constexpr (!std::is_const_v<decltype(*this)>)
@@ -91,18 +94,17 @@ namespace igx::rt {
 
 	class RaytracingInterface : public oic::ViewportInterface {
 	
-		Graphics& g;
-
-		ui::GUI gui;
+		Graphics &g;
+		ui::GUI &gui;
+		FactoryContainer &factory;
 
 		GPUBufferRef cameraBuffer;
 
-		FactoryContainer factory;
 		CompositeTask compositeTask;
 	
 		SwapchainRef swapchain;
 		CommandListRef cl;
-		NielsScene sceneGraph;
+		SceneGraph *sceneGraph;
 
 		oic::Random r;
 
@@ -120,7 +122,7 @@ namespace igx::rt {
 	
 		//Functions
 	
-		RaytracingInterface(Graphics &g);
+		RaytracingInterface(Graphics &g, ui::GUI &gui, FactoryContainer &factory, SceneGraph &sceneGraph);
 		~RaytracingInterface();
 	
 		void init(oic::ViewportInfo *vp) final override;

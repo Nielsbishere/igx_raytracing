@@ -100,7 +100,7 @@ namespace igx::rt {
 			NAME("Shadow shader"),
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
-				"`/shaders/shadow.comp" + ext,
+				VIRTUAL_FILE("shaders/shadow.comp" + ext),
 				{},
 				shadowLayout,
 				Vec3u32(THREADS_XY, THREADS_XY, 2)
@@ -135,7 +135,7 @@ namespace igx::rt {
 			NAME("Lighting shader"),
 			Pipeline::Info(
 				Pipeline::Flag::NONE,
-				"`/shaders/lighting.comp" + ext,
+				VIRTUAL_FILE("shaders/lighting.comp" + ext),
 				{},
 				lightingLayout,
 				Vec3u32(THREADS_XY, THREADS_XY, 1)

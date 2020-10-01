@@ -1,5 +1,5 @@
 #include "rt/task/composite_task.hpp"
-#include "rt/main.hpp"
+#include "rt/raytracing_interface.hpp"
 #include "graphics/command/commands.hpp"
 #include "graphics/enums.hpp"
 #include "graphics/graphics.hpp"
@@ -9,14 +9,15 @@
 #include "input/mouse.hpp"
 #include "igxi/convert.hpp"
 #include "rt/enums.hpp"
+#include "helpers/scene_graph.hpp"
 
 using namespace igx::ui;
 using namespace oic;
 
 namespace igx::rt {
 
-	RaytracingInterface::RaytracingInterface(Graphics &g) :
-		g(g), gui(g), factory(g),
+	RaytracingInterface::RaytracingInterface(Graphics &g, ui::GUI &gui, FactoryContainer &factory, SceneGraph &sceneGraph) :
+		g(g), gui(gui), factory(factory),
 		cameraBuffer {
 			g, NAME("Camera buffer"),
 			GPUBuffer::Info(
@@ -24,7 +25,7 @@ namespace igx::rt {
 			)
 	},
 		compositeTask(cameraBuffer, factory, gui),
-		sceneGraph(gui, factory)
+		sceneGraph(&sceneGraph)
 	{
 		compositeTask.switchToScene(&sceneGraph);
 		compositeTask.prepareMode(RenderMode::MQ);
@@ -141,7 +142,7 @@ namespace igx::rt {
 			update(vi, 0);
 
 			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
-			sceneGraph.fillCommandList(cl);
+			sceneGraph->fillCommandList(cl);
 			compositeTask.prepareCommandList(cl);
 
 			compositeTask.prepareMode(RenderMode::UQ);
@@ -180,7 +181,7 @@ namespace igx::rt {
 		if (compositeTask.needsCommandUpdate()) {
 			cl->clear();
 			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
-			sceneGraph.fillCommandList(cl);
+			sceneGraph->fillCommandList(cl);
 			compositeTask.prepareCommandList(cl);
 		}
 		
@@ -268,7 +269,7 @@ namespace igx::rt {
 		std::memcpy(cameraBuffer->getBuffer(), &camera, sizeof(Camera));
 		cameraBuffer->flush(0, sizeof(Camera));
 
-		sceneGraph.update(dt);
+		sceneGraph->update(dt);
 		compositeTask.update(dt);
 	}
 
@@ -313,23 +314,3 @@ namespace igx::rt {
 		}
 	}
 };
-
-//Create window and wait for exit
-
-int main() {
-
-	ignis::Graphics g("Igx raytracing test", 1, "Igx", 1);
-	igx::rt::RaytracingInterface viewportInterface(g);
-
-	g.pause();
-
-	System::viewportManager()->create(
-		ViewportInfo(
-			g.appName, {}, {}, 0, &viewportInterface, ViewportInfo::HANDLE_INPUT
-		)
-	);
-
-	System::viewportManager()->waitForExit();
-
-	return 0;
-}
