@@ -299,8 +299,13 @@ namespace igx::rt {
 				if (keys[i].value == ih)
 					break;
 
-			if (i == j)
+			if (i == j) {
+
+				if (!hasUpdated)
+					sceneGraph->input(dvc, ih, isActive);
+
 				return;
+			}
 
 			usz i2 = i >> 1;
 

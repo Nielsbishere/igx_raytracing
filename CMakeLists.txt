@@ -63,6 +63,19 @@ add_virtual_files(
 		${shaderBinaries}
 )
 
+if(doShaderRecreate)
+
+	add_custom_command(
+		TARGET rtigx
+		PRE_BUILD COMMAND
+		ARGS
+		"${CMAKE_CURRENT_SOURCE_DIR}/res/shaders/compile.sh"
+		"$<$<CONFIG:debug>:-d>"
+		${shaders}
+	)
+
+endif()
+
 
 if(enableIgxRtTest)
 
@@ -84,19 +97,6 @@ if(enableIgxRtTest)
 	target_link_libraries(rtigx_test PRIVATE rtigx)
 
 	set_property(TARGET rtigx_test PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/res")
-
-	if(doShaderRecreate)
-
-		add_custom_command(
-			TARGET rtigx_test
-			PRE_BUILD COMMAND
-			ARGS
-			"${CMAKE_CURRENT_SOURCE_DIR}/res/shaders/compile.sh"
-			"$<$<CONFIG:debug>:-d>"
-			${shaders}
-		)
-
-	endif()
 
 
 	add_virtual_files(

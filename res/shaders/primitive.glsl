@@ -216,6 +216,13 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint64_t ob
 
 	const vec3 p1_p0 = p1 - p0;
 	const vec3 p2_p0 = p2 - p0;
+
+	#ifdef DEBUG
+
+	if(all(equal(p1_p0, vec3(0))))
+		return false;
+
+	#endif
 	
 	const vec3 h = cross(r.dir, p2_p0);
 	const float a = dot(p1_p0, h);
