@@ -14,7 +14,9 @@ struct Hit {
 	vec2 uv;
 	uint object;
 
-	vec3 n;
+	vec3 geometryNormal;
+
+	vec3 objectNormal;
 
 };
 
@@ -24,9 +26,15 @@ struct Ray {
 };
 
 struct Triangle {
-	float p0[3];
-	float p1[3];
-	float p2[3];
+
+	vec3 p0;
+	uint n0;
+
+	vec3 p1;
+	uint n1;
+
+	vec3 p2;
+	uint n2;
 };
 
 struct Cube {
@@ -84,6 +92,17 @@ vec3 decodeNormal(uvec2 stored) {
 	return vec3(nh) / 65535 * 2 - 1;
 }
 
+vec3 decodeSpheremap(uint n) {
+
+	vec2 nn = unpackHalf2x16(n);
+
+	float l = dot(vec3(nn, 1), -vec3(nn, -1));
+
+	nn *= sqrt(l);
+
+	return vec3(nn, l) * 2 + vec3(0, 0, -1);
+}
+
 //10 bits per channel (1 / 512 precision; 0.001953125x)
 
 uint encodeNormalLQ(vec3 n) {
@@ -120,6 +139,15 @@ uint unpackColorA(uvec2 col) {
 
 float unpackColorAUnorm(uvec2 col) {
 	return float(col.g >> 16) / 65535.0;
+}
+
+//Barycentric interpolate tri
+
+vec3 interpolate(vec3 a, vec3 b, vec3 c, vec2 triangleUv) {
+
+	vec3 barycentric = vec3(triangleUv, 1 - triangleUv.x - triangleUv.y);
+
+	return barycentric.x * b + barycentric.y * c + barycentric.z * a;
 }
 
 //Ray intersections
@@ -161,7 +189,7 @@ bool rayIntersectSphere(const Ray r, const vec4 sphere, inout Hit hit, uint64_t 
 		const vec3 o = hitT * r.dir + r.pos;
 		const vec3 normal = normalize(sphere.xyz - o);
 
-		hit.n = normal;
+		hit.geometryNormal = normal;
 
 		//Convert lat/long to uv
 		//Limits of asin and atan are pi/2, so we divide by that to get normalized coordinates
@@ -193,7 +221,7 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint64_t ob
 	if(hitT >= 0 && obj != prevObj && hitT < hit.hitT) {
 
 		hit.hitT = hitT;
-		hit.n = dif > 0 ? -dir : dir;
+		hit.geometryNormal = dif > 0 ? -dir : dir;
 
 		vec3 o = hitT * r.dir + r.pos;
 
@@ -210,9 +238,9 @@ bool rayIntersectPlane(const Ray r, const vec4 plane, inout Hit hit, uint64_t ob
 
 bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint64_t obj, uint64_t prevObj) {
 
-	const vec3 p0 = vec3(tri.p0[0], tri.p0[1], tri.p0[2]);
-	const vec3 p1 = vec3(tri.p1[0], tri.p1[1], tri.p1[2]);
-	const vec3 p2 = vec3(tri.p2[0], tri.p2[1], tri.p2[2]);
+	const vec3 p0 = tri.p0;
+	const vec3 p1 = tri.p1;
+	const vec3 p2 = tri.p2;
 
 	const vec3 p1_p0 = p1 - p0;
 	const vec3 p2_p0 = p2 - p0;
@@ -250,7 +278,7 @@ bool rayIntersectTri(const Ray r, const Triangle tri, inout Hit hit, uint64_t ob
 
 	hit.uv = vec2(u, v);
 	hit.hitT = t;
-	hit.n = normalize(cross(p1 - p0, p2 - p0)) * -sign(a);
+	hit.geometryNormal = cross(normalize(p1 - p0), normalize(p2 - p0)) * -sign(a);
 
 	return true;
 }
@@ -282,19 +310,19 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint64_t obj,
 
 	if(tmin == mi.x) {
 		int isLeft = int(mi.x == startDir.x);
-		hit.n = vec3(isLeft * 2 - 1, 0, 0);
+		hit.geometryNormal = vec3(isLeft * 2 - 1, 0, 0);
 		hit.uv = pos.yz;
 	}
 
 	else if(tmin == mi.y) {
 		int isDown = int(mi.y == startDir.y);
-		hit.n = vec3(0, isDown * 2 - 1, 0);
+		hit.geometryNormal = vec3(0, isDown * 2 - 1, 0);
 		hit.uv = pos.xz;
 	}
 
 	else {
 		int isBack = int(mi.z == startDir.z);
-		hit.n = vec3(0, 0, isBack * 2 - 1);
+		hit.geometryNormal = vec3(0, 0, isBack * 2 - 1);
 		hit.uv = pos.xy;
 	}
 

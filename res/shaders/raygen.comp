@@ -44,10 +44,10 @@ void main() {
 	imageStore(dirObject, ivec2(loc), _dirObject);
 
 	#ifdef DEBUG
-		imageStore(uvNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(encodeNormal(hit.n))));
+		imageStore(uvNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(encodeNormal(hit.objectNormal))));
 	#else
 		if (hit.hitT < noHit)
-			imageStore(uvNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(encodeNormal(hit.n))));
+			imageStore(uvNormal, ivec2(loc), vec4(hit.uv, uintBitsToFloat(encodeNormal(hit.objectNormal))));
 	#endif
 
 }

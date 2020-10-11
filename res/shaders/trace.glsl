@@ -15,7 +15,7 @@ Hit traceGeometry(const Ray ray, uint prevHit) {
 
 	hit.uv = vec2(0);
 	hit.object = 0;
-	hit.n = vec3(0);
+	hit.geometryNormal = vec3(0);
 
 	//TODO: Only get normal and uv of one object
 
@@ -43,6 +43,23 @@ Hit traceGeometry(const Ray ray, uint prevHit) {
 		for(uint i = 0; i < sceneInfo.planeCount; ++i, ++j)
 			if(rayIntersectPlane(ray, planes[i], hit, j, prevHit))
 				hit.object = j;
+	#endif
+
+	#ifdef ALLOW_TRIANGLES
+
+		if(hit.object < sceneInfo.triangleCount) {
+
+			vec3 n0 = decodeSpheremap(triangles[hit.object].n0);
+			vec3 n1 = decodeSpheremap(triangles[hit.object].n1);
+			vec3 n2 = decodeSpheremap(triangles[hit.object].n2);
+
+			hit.objectNormal = interpolate(n0, n1, n2, hit.uv);
+		}
+
+		else hit.objectNormal = hit.geometryNormal;
+
+	#else
+		hit.objectNormal = hit.geometryNormal;
 	#endif
 
 	return hit;

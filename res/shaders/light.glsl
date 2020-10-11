@@ -193,7 +193,7 @@ vec3 shadeHit(Ray ray, Hit hit, vec3 light, vec3 reflection) {
 
 	const vec3 position = ray.pos + ray.dir * hit.hitT;
 	
-	const vec3 n = hit.n;
+	const vec3 n = hit.objectNormal;
 	const vec3 v = ray.dir;
 	const float NdotV = max(dot(v, -n), 0);
 
@@ -209,7 +209,7 @@ vec3 shadeHitFinalRecursion(Ray ray, Hit hit, vec3 light) {
 
 	const vec3 position = ray.pos + ray.dir * hit.hitT;
 	
-	const vec3 n = hit.n;
+	const vec3 n = hit.objectNormal;
 	const vec3 v = ray.dir;
 	const float NdotV = max(dot(v, -n), 0);
 

@@ -68,6 +68,8 @@ void main() {
 
 	const uint object = floatBitsToUint(_dirObject.w);
 
+	const vec3 n = decodeNormal(floatBitsToUint(_uvNormal.zw));
+
 	Hit hit = Hit(
 
 		normalize(_dirObject.xyz), 
@@ -77,7 +79,8 @@ void main() {
 		_uvNormal.xy, 
 		object,
 
-		decodeNormal(floatBitsToUint(_uvNormal.zw))
+		n,
+		n
 	);
 
 	if(object == noRayHit)
@@ -116,7 +119,7 @@ void main() {
 			case DEBUG_TYPE_NORMALS:
 
 				if(hit.hitT < noHit)
-					color = hit.n * 0.5 + 0.5;
+					color = hit.objectNormal * 0.5 + 0.5;
 
 				break;
 
@@ -200,7 +203,7 @@ void main() {
 			case DEBUG_TYPE_REFLECTION:
 
 				if(hit.hitT < noHit)
-					color = sampleSkybox(reflect(prim.dir, hit.n));
+					color = sampleSkybox(reflect(prim.dir, hit.objectNormal));
 
 				break;
 
