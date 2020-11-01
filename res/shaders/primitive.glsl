@@ -332,6 +332,41 @@ bool rayIntersectCube(const Ray r, const Cube cube, inout Hit hit, uint64_t obj,
 	return true;
 }
 
+//https://mathinsight.org/scalar_triple_product
+
+float ScTP(vec3 a, vec3 b, vec3 c){
+    return dot(cross(a, b), c);
+}
+
+//Minified intersection test ray vs tetrahedron
+//https://stackoverflow.com/questions/35393058/implementing-a-tetrahedra-ray-intersection-test
+
+bool intersects(vec3 ro, vec3 rd, vec3 t[4]) {
+
+	//Project tetrahedron into ray space
+
+	vec3 p0 = t[0] - ro;
+	vec3 p1 = t[1] - ro;
+	vec3 p2 = t[2] - ro;
+	vec3 p3 = t[3] - ro;
+
+	float sqAB = sign(ScTP(rd, p0, p1));
+	float sqBC = sign(ScTP(rd, p1, p2));
+	float sqAC = sign(ScTP(rd, p0, p2));
+	float sqAD = sign(ScTP(rd, p0, p3));
+	float sqBD = sign(ScTP(rd, p1, p3));
+	float sqCD = sign(ScTP(rd, p2, p3));
+
+	//Check if the distance to edges are within expected limits
+
+	bool ABC = sqAB < 0 && sqAC > 0 && sqBC < 0;
+	bool BAD = sqAB > 0 && sqAD < 0 && sqBD > 0;
+	bool CDA = sqAD > 0 && sqAC < 0 && sqCD < 0;
+	bool DCB = sqBC > 0 && sqBD < 0 && sqCD > 0;
+
+	return ABC || BAD || CDA || DCB;
+}
+
 //Sphere in plane means; the sphere intersects with the plane
 
 bool sphereInPlane(const vec4 sphere, const vec4 plane) {

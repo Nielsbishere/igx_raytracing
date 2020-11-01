@@ -25,14 +25,14 @@ namespace igx::rt {
 		uniformBuffer = {
 			factory.getGraphics(), NAME("Cloud uniform buffer"),
 			GPUBuffer::Info(
-				sizeof(CloudBuffer), GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE
+				sizeof(CloudBuffer), GPUBufferUsage::UNIFORM, GPUMemoryUsage::CPU_WRITE
 			)
 		};
 
 		noiseUniformData = {
 			factory.getGraphics(), NAME("Noise uniform buffer"),
 			GPUBuffer::Info(
-				sizeof(NoiseUniformData), GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE
+				sizeof(NoiseUniformData), GPUBufferUsage::UNIFORM, GPUMemoryUsage::CPU_WRITE
 			)
 		};
 
@@ -71,7 +71,7 @@ namespace igx::rt {
 				cloudLayout, 1,
 				{
 					{ 1, GPUSubresource(linearSampler, noiseOutputHQ, TextureType::TEXTURE_3D) },
-					{ 3, GPUSubresource(uniformBuffer) }
+					{ 3, GPUSubresource(uniformBuffer, GPUBufferType::UNIFORM) }
 				}
 			)
 		};
@@ -130,7 +130,7 @@ namespace igx::rt {
 		cloudBuffer->directionalLights = sceneGraph->getInfo().directionalLightCount;
 
 		cloudDescriptors->updateDescriptor(4, GPUSubresource(
-			sceneGraph->getBuffer<SceneObjectType::LIGHT>(), 0, cloudBuffer->directionalLights * sizeof(Light)
+			sceneGraph->getBuffer<SceneObjectType::LIGHT>(), GPUBufferType::STRUCTURED, 0, cloudBuffer->directionalLights * sizeof(Light)
 		));
 		cloudDescriptors->flush({ { 4, 1 } });
 	}

@@ -106,17 +106,24 @@ namespace igx::rt {
 		CommandListRef cl;
 		SceneGraph *sceneGraph;
 
+		List<RenderTask*> prePasses, postPasses;
+
 		oic::Random r;
 
 		ui::StructInspector<RaytracingProperties> properties;
 		ui::StructInspector<CPUCamera> cameraInspector;
 
 		Vec3f32 dir;
-
-		f64 frameTime{};
 		u32 frames{};
 
+		f64 frameTime{};
+
+		RenderMode renderMode = RenderMode::MQ;
+
 		bool isResizeRequested{};
+
+		void fillCommandList();
+		void prepareMode(RenderMode mode);
 
 	public:
 	
@@ -124,6 +131,12 @@ namespace igx::rt {
 	
 		RaytracingInterface(Graphics &g, ui::GUI &gui, FactoryContainer &factory, SceneGraph &sceneGraph);
 		~RaytracingInterface();
+
+		RaytracingInterface(const RaytracingInterface&) = delete;
+		RaytracingInterface(RaytracingInterface&&) = delete;
+
+		RaytracingInterface &operator=(const RaytracingInterface&) = delete;
+		RaytracingInterface &operator=(RaytracingInterface&&) = delete;
 	
 		void init(oic::ViewportInfo *vp) final override;
 	
@@ -136,6 +149,9 @@ namespace igx::rt {
 		void render(const oic::ViewportInfo*) final override;
 		void update(const oic::ViewportInfo*, f64) final override;
 		void onInputUpdate(oic::ViewportInfo*, const oic::InputDevice*, oic::InputHandle, bool) final override;
+
+		void addPrepass(RenderTask *t);
+		void addPostpass(RenderTask *t);
 	};
 
 }

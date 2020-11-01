@@ -31,7 +31,7 @@ namespace igx::rt {
 
 		shadowProperties = {
 			factory.getGraphics(), NAME("Shadow properties"),
-			GPUBuffer::Info(sizeof(ShadowProperties), GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE)
+			GPUBuffer::Info(sizeof(ShadowProperties), GPUBufferUsage::UNIFORM, GPUMemoryUsage::CPU_WRITE)
 		};
 
 		nearestSampler = factory.get(
@@ -57,7 +57,7 @@ namespace igx::rt {
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("Seed"), 11, GPUBufferType::STORAGE, 8, 2, ShaderAccess::COMPUTE, sizeof(Seed)
+			NAME("Seed"), 11, GPUBufferType::UNIFORM, 3, 2, ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
 		usz stride = g.getVendor() == Vendor::NVIDIA ? sizeof(u32) : sizeof(u64);
@@ -85,8 +85,8 @@ namespace igx::rt {
 			g, NAME("Shadow descriptors"),
 			Descriptors::Info(
 				shadowLayout, 2, {
-					{ 10, GPUSubresource(shadowProperties) },
-					{ 11, GPUSubresource(seed) }
+					{ 10, GPUSubresource(shadowProperties, GPUBufferType::UNIFORM) },
+					{ 11, GPUSubresource(seed, GPUBufferType::UNIFORM) }
 				}
 			)
 		};
@@ -125,8 +125,8 @@ namespace igx::rt {
 			g, NAME("Lighting descriptors"),
 			Descriptors::Info(
 				lightingLayout, 2, {
-					{ 10, GPUSubresource(shadowProperties) },
-					{ 11, GPUSubresource(seed) }
+					{ 10, GPUSubresource(shadowProperties, GPUBufferType::UNIFORM) },
+					{ 11, GPUSubresource(seed, GPUBufferType::UNIFORM) }
 				}
 			)
 		};
@@ -161,14 +161,14 @@ namespace igx::rt {
 		shadowOutput.release();
 		shadowOutput = {
 			factory.getGraphics(), NAME("Shadow output"),
-			GPUBuffer::Info(stride * warps1D, GPUBufferType::STRUCTURED, GPUMemoryUsage::GPU_WRITE_ONLY)
+			GPUBuffer::Info(stride * warps1D, GPUBufferUsage::STORAGE, GPUMemoryUsage::GPU_WRITE_ONLY)
 		};
 
-		shadowDescriptors->updateDescriptor(13, GPUSubresource(shadowOutput));
+		shadowDescriptors->updateDescriptor(13, GPUSubresource(shadowOutput, GPUBufferType::STRUCTURED));
 		shadowDescriptors->updateDescriptor(14, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
 		shadowDescriptors->flush({ { 13, 2 } });
 
-		lightingDescriptors->updateDescriptor(13, GPUSubresource(shadowOutput));
+		lightingDescriptors->updateDescriptor(13, GPUSubresource(shadowOutput, GPUBufferType::STRUCTURED));
 		lightingDescriptors->updateDescriptor(14, GPUSubresource(nearestSampler, raygen->getTexture(0), TextureType::TEXTURE_2D));
 		lightingDescriptors->updateDescriptor(15, GPUSubresource(nearestSampler, raygen->getTexture(1), TextureType::TEXTURE_2D));
 		lightingDescriptors->updateDescriptor(16, GPUSubresource(getTexture(0), TextureType::TEXTURE_2D));

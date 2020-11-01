@@ -13,7 +13,10 @@ namespace igx::rt {
 
 		targetRes = {
 			factory.getGraphics(), NAME(name + " target res"),
-			GPUBuffer::Info(Buffer((u8*)&inf, (u8*)(&inf + 1)), GPUBufferType::UNIFORM, GPUMemoryUsage::LOCAL)
+			GPUBuffer::Info(
+				GPUBufferUsage::UNIFORM, GPUMemoryUsage::LOCAL,
+				Buffer((u8*)&inf, (u8*)(&inf + 1))
+			)
 		};
 
 		layout = factory.get(
@@ -28,8 +31,8 @@ namespace igx::rt {
 			factory.getGraphics(), NAME(name + " descriptors"),
 			Descriptors::Info(
 				layout, 0, {
-					{ 0, GPUSubresource(data) },
-					{ 1, GPUSubresource(targetRes) },
+					{ 0, GPUSubresource(data, GPUBufferType::UNIFORM) },
+					{ 1, GPUSubresource(targetRes, GPUBufferType::UNIFORM) },
 					{ 2, GPUSubresource(output, TextureType::TEXTURE_3D) }
 				}
 			)

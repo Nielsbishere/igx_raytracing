@@ -31,7 +31,7 @@ namespace igx::rt {
 		seedBuffer = {
 			g, NAME("Seed buffer"),
 			GPUBuffer::Info(
-				sizeof(Seed), GPUBufferType::STORAGE, GPUMemoryUsage::CPU_WRITE | GPUMemoryUsage::GPU_WRITE
+				sizeof(Seed), GPUBufferUsage::STORAGE_UNIFORM, GPUMemoryUsage::CPU_WRITE | GPUMemoryUsage::GPU_WRITE
 			)
 		};
 
@@ -44,7 +44,7 @@ namespace igx::rt {
 			g, NAME("Camera descriptor"),
 			Descriptors::Info(
 				layout, 0,
-				{ { 0, GPUSubresource(cameraBuffer) } }
+				{ { 0, GPUSubresource(cameraBuffer, GPUBufferType::UNIFORM) } }
 			)
 		};
 
@@ -89,7 +89,7 @@ namespace igx::rt {
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("seed"), 17, GPUBufferType::STORAGE, 8, 2,
+			NAME("seed"), 17, GPUBufferType::UNIFORM, 2, 2,
 			ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
@@ -98,7 +98,7 @@ namespace igx::rt {
 			debugBuffer = {
 				g, NAME("Debug buffer"),
 				GPUBuffer::Info(
-					sizeof(DebugData), GPUBufferType::UNIFORM,
+					sizeof(DebugData), GPUBufferUsage::UNIFORM,
 					GPUMemoryUsage::CPU_WRITE
 				)
 			};
@@ -107,7 +107,7 @@ namespace igx::rt {
 			::new(debData) DebugData();
 
 			raytracingLayout.push_back(RegisterLayout(
-				NAME("DebugInfo"), 18, GPUBufferType::UNIFORM, 2, 2,
+				NAME("DebugInfo"), 18, GPUBufferType::UNIFORM, 3, 2,
 				ShaderAccess::COMPUTE, sizeof(DebugData)
 			));
 
@@ -141,10 +141,10 @@ namespace igx::rt {
 			Descriptors::Info(shaderLayout, 2, {
 
 				{ 10, GPUSubresource(nearestSampler, gui.getFramebuffer()->getTarget(0), TextureType::TEXTURE_MS) },
-				{ 17, GPUSubresource(seedBuffer) }
+				{ 17, GPUSubresource(seedBuffer, GPUBufferType::UNIFORM) }
 
 				#ifndef NDEBUG
-				, { 18, GPUSubresource(debugBuffer) }
+				, { 18, GPUSubresource(debugBuffer, GPUBufferType::UNIFORM) }
 				#endif
 
 			})
@@ -175,7 +175,7 @@ namespace igx::rt {
 
 		initDescriptors = {
 			g, NAME("Init task descriptors"),
-			Descriptors::Info(initShaderLayout, 0, { { 0, GPUSubresource(seedBuffer) } })
+			Descriptors::Info(initShaderLayout, 0, { { 0, GPUSubresource(seedBuffer, GPUBufferType::STORAGE) } })
 		};
 
 		initShader = factory.get(

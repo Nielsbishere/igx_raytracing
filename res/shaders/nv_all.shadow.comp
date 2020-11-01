@@ -29,7 +29,7 @@ layout(binding=2, std140) uniform ShadowProperties {
 
 #endif
 
-layout(binding=8, std140) readonly buffer SeedBuffer {
+layout(binding=3, std140) uniform SeedBuffer {
 	Seed seed;
 };
 

@@ -18,17 +18,18 @@ namespace igx::rt {
 
 	RaytracingInterface::RaytracingInterface(Graphics &g, ui::GUI &gui, FactoryContainer &factory, SceneGraph &sceneGraph) :
 		g(g), gui(gui), factory(factory),
-		cameraBuffer {
+		cameraBuffer{
 			g, NAME("Camera buffer"),
 			GPUBuffer::Info(
-				sizeof(Camera), GPUBufferType::UNIFORM, GPUMemoryUsage::CPU_WRITE
+				sizeof(Camera), GPUBufferUsage::UNIFORM, GPUMemoryUsage::CPU_WRITE
 			)
 	},
 		compositeTask(cameraBuffer, factory, gui),
 		sceneGraph(&sceneGraph)
 	{
 		compositeTask.switchToScene(&sceneGraph);
-		compositeTask.prepareMode(RenderMode::MQ);
+		compositeTask.prepareMode(renderMode);
+
 		//TODO: If kS == 0, there won't be a reflection
 		//		If kD == 0, there won't be shadow rays
 
@@ -53,6 +54,16 @@ namespace igx::rt {
 	}
 
 	RaytracingInterface::~RaytracingInterface() { 
+
+		for (RenderTask *rt : prePasses)
+			delete rt;
+
+		for (RenderTask *rt : postPasses)
+			delete rt;
+
+		prePasses.clear();
+		postPasses.clear();
+
 		gui.removeWindow(EDITOR_MAIN);
 		gui.removeWindow(EDITOR_CAMERA);
 	}
@@ -98,8 +109,14 @@ namespace igx::rt {
 		if(vp)
 			swapchain->onResize(size);
 
+		for (RenderTask *rt : prePasses)
+			rt->resize(size);
+
 		gui.resize(size);
 		compositeTask.resize(size);
+
+		for (RenderTask *rt : postPasses)
+			rt->resize(size);
 	}
 
 	//Execute commandList
@@ -124,6 +141,56 @@ namespace igx::rt {
 		igxi::Helper::toDiskExternal(igxi, properties.value.targetOutput);
 	}
 
+	void RaytracingInterface::fillCommandList() {
+
+		bool needsCommandUpdate = false;
+
+		for (RenderTask *rt : prePasses)
+			if (rt->needsCommandUpdate()) {
+				needsCommandUpdate = true;
+				break;
+			}
+
+		if (compositeTask.needsCommandUpdate())
+			needsCommandUpdate = true;
+
+		for (RenderTask *rt : postPasses)
+			if (rt->needsCommandUpdate()) {
+				needsCommandUpdate = true;
+				break;
+			}
+
+		if (!needsCommandUpdate)
+			return;
+
+		cl->clear();
+
+		cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
+
+		sceneGraph->fillCommandList(cl);
+
+		for (RenderTask *rt : prePasses)
+			rt->prepareCommandList(cl);
+
+		compositeTask.prepareCommandList(cl);
+
+		for (RenderTask *rt : postPasses)
+			rt->prepareCommandList(cl);
+	}
+
+	void RaytracingInterface::prepareMode(RenderMode mode) {
+
+		renderMode = mode;
+
+		for (RenderTask *rt : prePasses)
+			rt->prepareMode(mode);
+
+		compositeTask.prepareMode(mode);
+
+		for (RenderTask *rt : postPasses)
+			rt->prepareMode(mode);
+	}
+
 	void RaytracingInterface::render(const ViewportInfo *vi) {
 
 		if (properties.value.shouldOutputNextFrame) {
@@ -141,11 +208,9 @@ namespace igx::rt {
 
 			update(vi, 0);
 
-			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
-			sceneGraph->fillCommandList(cl);
-			compositeTask.prepareCommandList(cl);
+			fillCommandList();
 
-			compositeTask.prepareMode(RenderMode::UQ);
+			prepareMode(RenderMode::UQ);
 
 			UploadBufferRef cpuOutput {
 				g, "Frame output",
@@ -165,7 +230,7 @@ namespace igx::rt {
 			Vec2u16 actualSize = swapchain->getInfo().size;
 			resize(nullptr, Vec2u32(actualSize.x, actualSize.y));
 
-			compositeTask.prepareMode(RenderMode::MQ);
+			prepareMode(RenderMode::MQ);
 
 			isResizeRequested = false;
 			properties.value.shouldOutputNextFrame = false;
@@ -178,12 +243,7 @@ namespace igx::rt {
 
 		//Regular render
 
-		if (compositeTask.needsCommandUpdate()) {
-			cl->clear();
-			cl->add(FlushBuffer(cameraBuffer, factory.getDefaultUploadBuffer()));
-			sceneGraph->fillCommandList(cl);
-			compositeTask.prepareCommandList(cl);
-		}
+		fillCommandList();
 		
 		if (!bool(cameraInspector.value.flags & CameraFlags::USE_UI)) {
 			g.present(compositeTask.getTexture(), 0, 0, swapchain, cl);
@@ -206,23 +266,21 @@ namespace igx::rt {
 		++frames;
 		frameTime += dt;
 
-		f32 speedUp = 1;
-
 		for(InputDevice *dev : vi->devices)
 			if (dynamic_cast<Keyboard*>(dev)) {
 
 				if (dev->isDown(Key::Key_ctrl))
-					dt *= 1.5;
+					dt *= 2;
 
 				if (dev->isDown(Key::Key_shift))
-					speedUp *= 2;
+					dt *= 2;
 			}
 
 		CPUCamera &camera = cameraInspector;
 
 		auto v = camera.getView(0);
 
-		Vec3f32 d = dir.clamp(-1, 1) * f32(dt * camera.speed * speedUp);
+		Vec3f32 d = dir.clamp(-1, 1) * f32(dt * camera.speed * 1);
 		camera.eye += (v * Vec4f32(d.x, d.y, d.z, 0)).cast<Vec3f32>();
 
 		bool isStereo =
@@ -270,7 +328,14 @@ namespace igx::rt {
 		cameraBuffer->flush(0, sizeof(Camera));
 
 		sceneGraph->update(dt);
+
+		for (RenderTask *rt : prePasses)
+			rt->update(dt);
+
 		compositeTask.update(dt);
+
+		for (RenderTask *rt : postPasses)
+			rt->update(dt);
 	}
 
 	//Input
@@ -317,5 +382,21 @@ namespace igx::rt {
 
 			dir.arr[i2] += i & 1 ? v : -v;
 		}
+	}
+	
+	void RaytracingInterface::addPrepass(RenderTask *t) {
+
+		t->switchToScene(sceneGraph);
+		t->prepareMode(renderMode);
+
+		prePasses.push_back(t);
+	}
+
+	void RaytracingInterface::addPostpass(RenderTask *t) {
+
+		t->switchToScene(sceneGraph);
+		t->prepareMode(renderMode);
+
+		postPasses.push_back(t);
 	}
 };

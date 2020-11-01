@@ -39,7 +39,7 @@ namespace igx::rt {
 		));
 
 		raytracingLayout.push_back(RegisterLayout(
-			NAME("SeedBuffer"), 12, GPUBufferType::STORAGE, 8, 2,
+			NAME("SeedBuffer"), 12, GPUBufferType::UNIFORM, 2, 2,
 			ShaderAccess::COMPUTE, sizeof(Seed)
 		));
 
@@ -52,7 +52,7 @@ namespace igx::rt {
 			g, NAME("Raygen task descriptors"),
 			Descriptors::Info(
 				shaderLayout, 2, {
-					{ 12, GPUSubresource(seedBuffer) }
+					{ 12, GPUSubresource(seedBuffer, GPUBufferType::UNIFORM) }
 				}
 			)
 		};

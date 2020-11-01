@@ -13,7 +13,7 @@ layout(binding=3) uniform sampler2D uvNormal;
 layout(binding=4) uniform sampler2D cloutput;
 layout(binding=5) uniform sampler2D lighting;
 
-layout(binding=8, std140) readonly buffer SeedBuffer {
+layout(binding=2, std140) uniform SeedBuffer {
 	Seed seed;
 };
 
@@ -40,7 +40,7 @@ layout(binding=8, std140) readonly buffer SeedBuffer {
 	const uint DEBUG_TYPE_CLOUD_TRANSPARENCY	= 18;
 	const uint DEBUG_TYPE_SKY					= 19;
 	
-	layout(binding=2, std140) uniform DebugData {
+	layout(binding=3, std140) uniform DebugData {
 		uint debugType;
 		uint nanOnly;
 	};

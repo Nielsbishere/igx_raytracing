@@ -4,7 +4,7 @@
 #include "defines.glsl"
 #include "trace.glsl"
 
-layout(binding=8, std140) readonly buffer SeedBuffer {
+layout(binding=2, std140) uniform SeedBuffer {
 	Seed seed;
 };
 
