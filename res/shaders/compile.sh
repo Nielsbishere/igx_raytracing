@@ -12,7 +12,7 @@ function compileVendor {
 
 	echo -- Compiling file "$1" to "$2"
 
-	glslangValidator -G1.0 --target-env spirv1.0 -DVENDOR_$vendor -D$mode -e main -o "$2" "$1"
+	glslangValidator -G100 --target-env spirv1.0 -DVENDOR_$vendor -D$mode -e main -o "$2" "$1"
 
 	if [ $? -ne 0 ]; 
 	then 
